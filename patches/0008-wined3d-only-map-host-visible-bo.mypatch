@@ -3,31 +3,24 @@ From: Gemini 3.6 Flash <gemini@google.com>
 Date: Sun, 2 Aug 2026 19:13:00 -0300
 Subject: [PATCH] wined3d: Only map host-visible buffer objects in Vulkan backend and handle unmapped BOs in cs.c.
 
-1. In adapter_vk_alloc_bo(), check for VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT before calling
-   wined3d_bo_vk_map(). GPU-only buffers lack host-visible memory, causing vkMapMemory()
-   to fail with VK_ERROR_MEMORY_MAP_FAILED and Direct3D initialization to break in Kontakt 8.
-2. In wined3d_cs_map_upload_bo() (cs.c), remove `assert(flags & WINED3D_MAP_NOOVERWRITE)`.
-   When mapping non-host-visible BOs with WINED3D_MAP_DISCARD, map_ptr is NULL.
-   Removing the invalid assert allows wined3d to cleanly fall back to heap staging buffers
-   without popping up a C Runtime "Assertion failed! Program: wined3d.dll, File: cs.c" error dialog.
 ---
- dlls/wined3d/adapter_vk.c | 3 ++-
+ dlls/wined3d/adapter_vk.c | 2 +-
  dlls/wined3d/cs.c         | 6 ++----
- 2 files changed, 4 insertions(+), 5 deletions(-)
+ 2 files changed, 3 insertions(+), 5 deletions(-)
 
 diff --git a/dlls/wined3d/adapter_vk.c b/dlls/wined3d/adapter_vk.c
-index 895d3815e7c..13383d3337b 100644
+index 55c7b167156..86512b191a0 100644
 --- a/dlls/wined3d/adapter_vk.c
 +++ b/dlls/wined3d/adapter_vk.c
-@@ -1224,7 +1224,8 @@ static bool adapter_vk_alloc_bo(struct wined3d_adapter_vk *adapter_vk,
-     if (!wined3d_bo_vk_init(bo_vk, &adapter_vk->device_vk, usage, memory_type, size))
-         return false;
+@@ -1225,7 +1225,7 @@ static bool adapter_vk_alloc_bo(struct wined3d_device *device, struct wined3d_re
  
--    if (!wined3d_bo_vk_map(bo_vk))
-+    if ((memory_type & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !wined3d_bo_vk_map(bo_vk))
+     if (!bo_vk->b.map_ptr)
      {
-         ERR("Failed to map bo.\n");
-         wined3d_bo_vk_cleanup(bo_vk);
+-        if (!wined3d_bo_vk_map(bo_vk, context_vk))
++        if ((bo_vk->memory_type & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !wined3d_bo_vk_map(bo_vk, context_vk))
+             ERR("Failed to map bo.\n");
+     }
+ 
 diff --git a/dlls/wined3d/cs.c b/dlls/wined3d/cs.c
 index 7b17b1d3557..f2a7083705c 100644
 --- a/dlls/wined3d/cs.c
