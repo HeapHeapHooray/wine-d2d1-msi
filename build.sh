@@ -17,7 +17,7 @@
 #         ~/.local/share/cheapwine/runners/ (or bottles/runners/).
 #
 # Requirements: a C cross-compiler setup for Wine (mingw-w64, bison, flex,
-#   autoconf, perl, gettext, vulkan-headers), ~4 GB free disk, ~30-60 min.
+#   autoconf, perl, gettext, libvulkan-dev), ~4 GB free disk, ~30-60 min.
 #   On Debian/Ubuntu the script can install these via apt (it will ask first).
 # =============================================================================
 set -euo pipefail
