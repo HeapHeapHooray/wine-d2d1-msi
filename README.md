@@ -85,6 +85,7 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 
 - **Don't install DXVK for DComp plugins** — the DComp/DXGI patches live in Wine's builtin
   `dxgi.dll`; DXVK replaces it and bypasses them.
+- **Kontakt 8 Graphics Backend**: You need to run `winetricks renderer=vulkan` (or use the default `wined3d` Vulkan renderer) to properly use Kontakt 8 without graphics backend initialization errors.
 - The MSI fix is self-contained in `dlls/msi/table.c` and is safe for installers that don't
   cross the threshold (it only changes behavior when the pool exceeds 65,535 entries).
 
