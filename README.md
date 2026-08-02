@@ -16,6 +16,11 @@ the same d2d1/dcomp functionality, but built on giang17's **plain Wine 11.0** br
 (the exact source [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 packages) instead of Valve's Proton/Soda tree.
 
+> **Related:** [HeapHeapHooray/KontaktInstallWine](https://github.com/HeapHeapHooray/KontaktInstallWine)
+> — the standalone Kontakt 8 installer-for-Wine package (root-cause analysis + a ready-to-run
+> install procedure). The MSI fix in *this* repo is the same bug, patched at the Wine level so
+> the stock NI installer works unmodified.
+
 ## What's in the box
 
 - **Base**: `giang17/wine` branch `d2d1-dcomp-11.0` @ `8abcdd1fde0866f8d55c57586efc1567c9ce30d6`
