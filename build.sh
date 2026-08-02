@@ -57,7 +57,7 @@ if need_deps; then
                 libfreetype-dev libfontconfig-dev libpng-dev libjpeg-dev \
                 libgif-dev libgnutls28-dev libasound2-dev libpulse-dev \
                 libxcomposite-dev libxcursor-dev libxrandr-dev libxi-dev \
-                libxinerama-dev vulkan-headers libvulkan-dev
+                libxinerama-dev libvulkan-dev
             ;;
         *) echo "Continuing anyway — the build may fail if deps are missing." ;;
     esac
