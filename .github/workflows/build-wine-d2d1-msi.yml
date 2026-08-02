@@ -1,0 +1,76 @@
+name: build-wine-d2d1-msi
+on:
+  push:
+    branches:
+      - 'master'
+      - 'main'
+  workflow_dispatch:
+env:
+  WINE_VERSION: '11.0'
+  PKG_BASENAME: 'wine-d2d1-msi'
+  GIANG17_REPO: 'https://github.com/giang17/wine.git'
+  GIANG17_COMMIT: '8abcdd1fde0866f8d55c57586efc1567c9ce30d6'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the release tag + upload the runner asset
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Wine build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache mingw-w64 bison flex autoconf perl gettext \
+            libfreetype-dev libfontconfig-dev libpng-dev libjpeg-dev \
+            libgif-dev libgnutls28-dev libasound2-dev libpulse-dev \
+            libxcomposite-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxinerama-dev vulkan-headers libvulkan-dev
+
+      - name: clone giang17 wine (pinned)
+        working-directory: /home/runner/work/
+        run: |
+          git clone --no-checkout "$GIANG17_REPO" wine
+          cd wine
+          git fetch --depth 1 origin "$GIANG17_COMMIT" || git fetch origin d2d1-dcomp-11.0
+          git checkout -q "$GIANG17_COMMIT"
+
+      - name: apply the MSI string-pool patch
+        working-directory: /home/runner/work/wine
+        run: |
+          for p in "$GITHUB_WORKSPACE"/patches/*.mypatch; do
+            echo "Applying $(basename "$p")"
+            git apply --stat "$p"
+            git apply "$p"
+          done
+
+      - name: configure
+        working-directory: /home/runner/work/
+        run: |
+          mkdir -p build
+          cd build
+          ../wine/configure --prefix=/opt/${PKG_BASENAME}-${WINE_VERSION} --enable-archs=i386,x86_64
+
+      - name: build
+        working-directory: /home/runner/work/build
+        run: make -j"$(nproc)"
+
+      - name: package
+        working-directory: /home/runner/work/
+        run: |
+          make -C build DESTDIR=/home/runner/work/stage install
+          RUNNER_DIR="${PKG_BASENAME}-${WINE_VERSION}-x86_64"
+          mkdir -p "$RUNNER_DIR"
+          cp -a "stage/opt/${PKG_BASENAME}-${WINE_VERSION}/." "$RUNNER_DIR/"
+          tar cJvf "/tmp/${RUNNER_DIR}.tar.xz" "$RUNNER_DIR"
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ env.PKG_BASENAME }}-${{ env.WINE_VERSION }}"
+          name: "wine-d2d1-msi ${{ env.WINE_VERSION }}"
+          draft: false
+          prerelease: false
+          files: "/tmp/${{ env.PKG_BASENAME }}-${{ env.WINE_VERSION }}-x86_64.tar.xz"
