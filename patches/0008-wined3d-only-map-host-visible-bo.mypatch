@@ -1,36 +1,58 @@
-From 7f83e291a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6 Mon Sep 17 00:00:00 2001
+From c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7 Mon Sep 17 00:00:00 2001
 From: Gemini 3.6 Flash <gemini@google.com>
-Date: Sun, 2 Aug 2026 15:58:00 -0300
-Subject: [PATCH] wined3d: Only attempt to map buffer objects with host visible memory.
+Date: Sun, 2 Aug 2026 19:13:00 -0300
+Subject: [PATCH] wined3d: Only map host-visible buffer objects in Vulkan backend and handle unmapped BOs in cs.c.
 
-In adapter_vk_alloc_bo(), wined3d allocates Vulkan buffer objects.
-When creating GPU-only buffers (WINED3D_RTYPE_BUFFER) without host access
-flags, memory_type is allocated as device-local without
-VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT.
-
-Unconditionally calling wined3d_bo_vk_map() on non-host-visible memory causes
-vkMapMemory() to fail with VK_ERROR_MEMORY_MAP_FAILED (-5) and produces error
-logs (ERR("Failed to map bo.\n")), causing buffer allocation to fail during
-Direct3D backend initialization for applications like Kontakt 8.
-
-Fix by checking that memory_type contains VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-before calling wined3d_bo_vk_map().
+1. In adapter_vk_alloc_bo(), check for VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT before calling
+   wined3d_bo_vk_map(). GPU-only buffers lack host-visible memory, causing vkMapMemory()
+   to fail with VK_ERROR_MEMORY_MAP_FAILED and Direct3D initialization to break in Kontakt 8.
+2. In wined3d_cs_map_upload_bo() (cs.c), remove `assert(flags & WINED3D_MAP_NOOVERWRITE)`.
+   When mapping non-host-visible BOs with WINED3D_MAP_DISCARD, map_ptr is NULL.
+   Removing the invalid assert allows wined3d to cleanly fall back to heap staging buffers
+   without popping up a C Runtime "Assertion failed! Program: wined3d.dll, File: cs.c" error dialog.
 ---
- dlls/wined3d/adapter_vk.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ dlls/wined3d/adapter_vk.c | 3 ++-
+ dlls/wined3d/cs.c         | 6 ++----
+ 2 files changed, 4 insertions(+), 5 deletions(-)
 
 diff --git a/dlls/wined3d/adapter_vk.c b/dlls/wined3d/adapter_vk.c
-index 55c7b167156..5661df0c102 100644
+index 895d3815e7c..13383d3337b 100644
 --- a/dlls/wined3d/adapter_vk.c
 +++ b/dlls/wined3d/adapter_vk.c
-@@ -1223,7 +1223,7 @@ static bool adapter_vk_alloc_bo(struct wined3d_device *device, struct wined3d_re
+@@ -1224,7 +1224,8 @@ static bool adapter_vk_alloc_bo(struct wined3d_adapter_vk *adapter_vk,
+     if (!wined3d_bo_vk_init(bo_vk, &adapter_vk->device_vk, usage, memory_type, size))
          return false;
-     }
  
--    if (!bo_vk->b.map_ptr)
-+    if ((memory_type & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !bo_vk->b.map_ptr)
+-    if (!wined3d_bo_vk_map(bo_vk))
++    if ((memory_type & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !wined3d_bo_vk_map(bo_vk))
      {
-         if (!wined3d_bo_vk_map(bo_vk, context_vk))
-             ERR("Failed to map bo.\n");
+         ERR("Failed to map bo.\n");
+         wined3d_bo_vk_cleanup(bo_vk);
+diff --git a/dlls/wined3d/cs.c b/dlls/wined3d/cs.c
+index 7b17b1d3557..f2a7083705c 100644
+--- a/dlls/wined3d/cs.c
++++ b/dlls/wined3d/cs.c
+@@ -3207,10 +3207,7 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
+ 
+             if (!map_ptr)
+             {
+-                /* adapter_alloc_bo() should have given us a mapped BO if we are
+-                 * discarding. */
+-                assert(flags & WINED3D_MAP_NOOVERWRITE);
+-                WARN_(d3d_perf)("Not accelerating a NOOVERWRITE map because the BO is not mapped.\n");
++                WARN_(d3d_perf)("Not accelerating a map because the BO is not mapped.\n");
+                 return false;
+             }
+         }
+@@ -3218,8 +3215,7 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
+ 
+         if (!map_ptr)
+         {
+-            assert(flags & WINED3D_MAP_NOOVERWRITE);
+-            WARN_(d3d_perf)("Not accelerating a NOOVERWRITE map because the sub-resource has no valid address.\n");
++            WARN_(d3d_perf)("Not accelerating a map because the sub-resource has no valid address.\n");
+             return false;
+         }
+ 
 -- 
 2.43.0
