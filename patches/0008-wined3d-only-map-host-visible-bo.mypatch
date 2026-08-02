@@ -1,0 +1,36 @@
+From 7f83e291a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6 Mon Sep 17 00:00:00 2001
+From: Gemini 3.6 Flash <gemini@google.com>
+Date: Sun, 2 Aug 2026 15:58:00 -0300
+Subject: [PATCH] wined3d: Only attempt to map buffer objects with host visible memory.
+
+In adapter_vk_alloc_bo(), wined3d allocates Vulkan buffer objects.
+When creating GPU-only buffers (WINED3D_RTYPE_BUFFER) without host access
+flags, memory_type is allocated as device-local without
+VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT.
+
+Unconditionally calling wined3d_bo_vk_map() on non-host-visible memory causes
+vkMapMemory() to fail with VK_ERROR_MEMORY_MAP_FAILED (-5) and produces error
+logs (ERR("Failed to map bo.\n")), causing buffer allocation to fail during
+Direct3D backend initialization for applications like Kontakt 8.
+
+Fix by checking that memory_type contains VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+before calling wined3d_bo_vk_map().
+---
+ dlls/wined3d/adapter_vk.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/wined3d/adapter_vk.c b/dlls/wined3d/adapter_vk.c
+index 55c7b167156..5661df0c102 100644
+--- a/dlls/wined3d/adapter_vk.c
++++ b/dlls/wined3d/adapter_vk.c
+@@ -1223,7 +1223,7 @@ static bool adapter_vk_alloc_bo(struct wined3d_device *device, struct wined3d_re
+         return false;
+     }
+ 
+-    if (!bo_vk->b.map_ptr)
++    if ((memory_type & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !bo_vk->b.map_ptr)
+     {
+         if (!wined3d_bo_vk_map(bo_vk, context_vk))
+             ERR("Failed to map bo.\n");
+-- 
+2.43.0

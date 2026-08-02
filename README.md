@@ -25,7 +25,9 @@ packages) instead of Valve's Proton/Soda tree.
 
 - **Base**: `giang17/wine` branch `d2d1-dcomp-11.0` @ `46c43a2db62ceeac1b33b31bccdebda65ef7f770`
   (the branch state at **2026-07-03** — plain Wine 11.0 + the d2d1/dcomp/dwrite/dxgi/wined3d/win32 fixes, already in the branch).
-- **Patch**: `patches/0007-msi-rewrite-all-tables-on-long-strref.mypatch` — the MSI fix.
+- **Patches**:
+  - `patches/0007-msi-rewrite-all-tables-on-long-strref.mypatch` — the MSI fix.
+  - `patches/0008-wined3d-only-map-host-visible-bo.mypatch` — the wined3d Vulkan buffer mapping fix for Kontakt 8 D3D backend.
 
 ## The MSI fix (Option A)
 
@@ -41,6 +43,10 @@ NI's InstallAware installers edit their (large) MSI in place, which inflates the
 the threshold, so the install aborts during package creation. The patch makes
 `MSI_CommitTables()` load **every** table from the `_Tables` catalog and rewrite them all in
 the long-reference format, keeping the database consistent.
+
+## The wined3d Vulkan host-visible buffer mapping fix
+
+In `dlls/wined3d/adapter_vk.c`, `adapter_vk_alloc_bo()` unconditionally called `wined3d_bo_vk_map()` when allocating Vulkan buffer objects. For GPU-only buffers allocated without `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT`, this caused `vkMapMemory()` to fail with `VK_ERROR_MEMORY_MAP_FAILED`, producing allocation errors (`ERR("Failed to map bo.\n")`) and breaking Direct3D backend setup in Kontakt 8 under Wine's Vulkan backend. The patch checks for `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT` before attempting to map buffer objects.
 
 ## Build
 
@@ -87,5 +93,6 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 - d2d1/dcomp patch series: **giang17** — [github.com/giang17/wine](https://github.com/giang17/wine)
 - Standalone packaging this base is taken from: [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 - MSI string-pool analysis + patch, and this build tooling: **Kimi K3** (Moonshot AI)
+- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix): **Gemini 3.6 Flash** (Google DeepMind)
 
 License: LGPL-2.1-or-later, same as Wine.
