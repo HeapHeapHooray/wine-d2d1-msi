@@ -26,7 +26,7 @@ PKG_BASENAME="wine-d2d1-msi-11.0"
 GIANG17_REPO="https://github.com/giang17/wine.git"
 GIANG17_BRANCH="d2d1-dcomp-11.0"
 # Pinned base commit this adaptation was made and verified against:
-GIANG17_COMMIT="8abcdd1fde0866f8d55c57586efc1567c9ce30d6"
+GIANG17_COMMIT="46c43a2db62ceeac1b33b31bccdebda65ef7f770"
 
 cd "$(dirname "$0")"
 REPO_ROOT="$PWD"
