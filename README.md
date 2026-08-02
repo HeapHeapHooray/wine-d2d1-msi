@@ -1,5 +1,9 @@
 # wine-d2d1-msi — plain-Wine runner with d2d1-dcomp + the MSI string-pool fix
 
+> **Credits:** this project — the MSI string-pool analysis and patch, and the
+> whole build/packaging setup — was done entirely by **Kimi K3** (an AI
+> assistant by Moonshot AI).
+
 A standalone **Wine 11.0** runner built from [giang17](https://github.com/giang17/wine)'s
 `d2d1-dcomp-11.0` branch — the same Direct2D 1.3 + DirectComposition patch series that
 fixes JUCE 8 / VSTGUI / SynthEdit plugin GUIs rendering as **black windows** under Wine
