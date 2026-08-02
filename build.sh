@@ -70,6 +70,7 @@ fi
 cd "$SRC"
 git fetch --depth 1 origin "$GIANG17_COMMIT" || git fetch origin "$GIANG17_BRANCH"
 git checkout -q "$GIANG17_COMMIT"
+git restore .
 
 # --- 2. Apply the MSI string-pool fix ---------------------------------------
 for p in "$REPO_ROOT"/patches/*.mypatch; do
