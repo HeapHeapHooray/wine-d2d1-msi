@@ -1,9 +1,8 @@
 name: build-wine-d2d1-msi
 on:
   push:
-    branches:
-      - 'master'
-      - 'main'
+    tags:
+      - 'v*'
   workflow_dispatch:
 env:
   WINE_VERSION: '11.0'
@@ -69,8 +68,8 @@ jobs:
       - name: release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "${{ env.PKG_BASENAME }}-${{ env.WINE_VERSION }}"
-          name: "wine-d2d1-msi ${{ env.WINE_VERSION }}"
+          tag_name: "${{ github.ref_type == 'tag' && github.ref_name || format('{0}-{1}', env.PKG_BASENAME, env.WINE_VERSION) }}"
+          name: "wine-d2d1-msi ${{ github.ref_name }}"
           draft: false
           prerelease: false
           files: "/tmp/${{ env.PKG_BASENAME }}-${{ env.WINE_VERSION }}-x86_64.tar.xz"

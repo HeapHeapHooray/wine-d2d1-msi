@@ -28,6 +28,7 @@ packages) instead of Valve's Proton/Soda tree.
 - **Patches**:
   - `patches/0007-msi-rewrite-all-tables-on-long-strref.mypatch` — the MSI fix.
   - `patches/0008-wined3d-only-map-host-visible-bo.mypatch` — the wined3d Vulkan buffer mapping fix for Kontakt 8 D3D backend.
+  - `patches/0009-mscoree-implement-CLRRuntimeInfo_GetProcAddress-and-IManagedInstaller.mypatch` — the mscoree fix for VS/WiX managed installer Custom Actions (e.g., Heavyocity Portal / HPWin2126.msi).
 
 ## The MSI fix (Option A)
 
@@ -43,6 +44,16 @@ NI's InstallAware installers edit their (large) MSI in place, which inflates the
 the threshold, so the install aborts during package creation. The patch makes
 `MSI_CommitTables()` load **every** table from the `_Tables` catalog and rewrite them all in
 the long-reference format, keeping the database consistent.
+
+## The mscoree CLRRuntimeInfo_GetProcAddress & IManagedInstaller fix (HPWin2126.msi)
+
+Visual Studio / WiX installer packages (like `HPWin2126.msi` for Heavyocity Portal) use `InstallUtil.dll` (CustomAction Type 1) to invoke managed `.NET` Custom Actions during installation via `IManagedInstaller::ManagedInstall`.
+
+Two issues caused `mozapp run HPWin2126.msi` to fail with error 1603 (exit code 67):
+1. `CLRRuntimeInfo_GetProcAddress` in `dlls/mscoree/metahost.c` was an unimplemented stub returning `E_NOTIMPL`. This caused `InstallUtil.dll`'s request for `"ClrCreateManagedInstance"` to fail, returning error code `-4` (`0xFFFFFFEC`).
+2. When `ClrCreateManagedInstance` was called for `System.Configuration.Install.ManagedInstallerClass`, Wine Mono's `ManagedInstallerClass.InstallHelper` / `ManagedInstall` threw `System.NotImplementedException`, causing `InstallUtil.dll` to return `-5` (`0xFFFFFFEB`) and halting the MSI action execution.
+
+The patch implements `CLRRuntimeInfo_GetProcAddress` to look up procedures exported by `mscoree.dll` (such as `ClrCreateManagedInstance`), and provides a built-in `IManagedInstaller` COM interface fallback object in `mscoree.dll` so managed installer actions execute cleanly.
 
 ## The wined3d Vulkan host-visible buffer mapping fix
 
@@ -94,6 +105,6 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 - d2d1/dcomp patch series: **giang17** — [github.com/giang17/wine](https://github.com/giang17/wine)
 - Standalone packaging this base is taken from: [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 - MSI string-pool analysis + patch, and this build tooling: **Kimi K3** (Moonshot AI)
-- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix): **Gemini 3.6 Flash** (Google DeepMind)
+- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix) & mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix): **Gemini 3.6 Flash** (Google DeepMind)
 
 License: LGPL-2.1-or-later, same as Wine.

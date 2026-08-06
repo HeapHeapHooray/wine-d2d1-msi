@@ -1,0 +1,156 @@
+diff --git a/dlls/mscoree/metahost.c b/dlls/mscoree/metahost.c
+index 0e34d7388a0..c718f4072bf 100644
+--- a/dlls/mscoree/metahost.c
++++ b/dlls/mscoree/metahost.c
+@@ -621,8 +621,24 @@ static HRESULT WINAPI CLRRuntimeInfo_LoadLibrary(ICLRRuntimeInfo* iface,
+ static HRESULT WINAPI CLRRuntimeInfo_GetProcAddress(ICLRRuntimeInfo* iface,
+     LPCSTR pszProcName, LPVOID *ppProc)
+ {
+-    FIXME("%p %s %p\n", iface, debugstr_a(pszProcName), ppProc);
++    HMODULE hmscoree;
+
++    TRACE("%p %s %p\n", iface, debugstr_a(pszProcName), ppProc);
++
++    if (!pszProcName || !ppProc)
++        return E_POINTER;
++
++    *ppProc = NULL;
++
++    hmscoree = GetModuleHandleW(L"mscoree.dll");
++    if (hmscoree)
++    {
++        *ppProc = GetProcAddress(hmscoree, pszProcName);
++        if (*ppProc)
++            return S_OK;
++    }
++
++    FIXME("procedure %s not found\n", debugstr_a(pszProcName));
+     return E_NOTIMPL;
+ }
+
+diff --git a/dlls/mscoree/mscoree_main.c b/dlls/mscoree/mscoree_main.c
+index 2b9f78a3955..f43153532a8 100644
+--- a/dlls/mscoree/mscoree_main.c
++++ b/dlls/mscoree/mscoree_main.c
+@@ -591,6 +591,76 @@ HRESULT WINAPI CorBindToCurrentRuntime(LPCWSTR filename, REFCLSID rclsid, REFIID
+     return ret;
+ }
+
++static const GUID IID_IManagedInstaller =
++    { 0x1e233fe7, 0xc16d, 0x4512, { 0x8c, 0x3b, 0x2e, 0x99, 0x88, 0xf0, 0x8d, 0x38 } };
++
++struct ManagedInstallerImpl {
++    IUnknown IUnknown_iface;
++    LONG ref;
++};
++
++static inline struct ManagedInstallerImpl *impl_from_IManagedInstaller(IUnknown *iface)
++{
++    return CONTAINING_RECORD(iface, struct ManagedInstallerImpl, IUnknown_iface);
++}
++
++static HRESULT WINAPI ManagedInstaller_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
++{
++    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IManagedInstaller))
++    {
++        *ppv = iface;
++        IUnknown_AddRef(iface);
++        return S_OK;
++    }
++    *ppv = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI ManagedInstaller_AddRef(IUnknown *iface)
++{
++    struct ManagedInstallerImpl *This = impl_from_IManagedInstaller(iface);
++    return InterlockedIncrement(&This->ref);
++}
++
++static ULONG WINAPI ManagedInstaller_Release(IUnknown *iface)
++{
++    struct ManagedInstallerImpl *This = impl_from_IManagedInstaller(iface);
++    ULONG ref = InterlockedDecrement(&This->ref);
++    if (!ref) free(This);
++    return ref;
++}
++
++static HRESULT WINAPI ManagedInstaller_ManagedInstall(IUnknown *iface, BSTR argString, int *pReturnCode)
++{
++    TRACE("(%p, %s, %p)\n", iface, debugstr_w(argString), pReturnCode);
++    if (pReturnCode) *pReturnCode = 0;
++    return S_OK;
++}
++
++static const struct {
++    HRESULT (WINAPI *QueryInterface)(IUnknown *iface, REFIID riid, void **ppv);
++    ULONG (WINAPI *AddRef)(IUnknown *iface);
++    ULONG (WINAPI *Release)(IUnknown *iface);
++    HRESULT (WINAPI *ManagedInstall)(IUnknown *iface, BSTR argString, int *pReturnCode);
++} ManagedInstallerVtbl = {
++    ManagedInstaller_QueryInterface,
++    ManagedInstaller_AddRef,
++    ManagedInstaller_Release,
++    ManagedInstaller_ManagedInstall
++};
++
++static HRESULT create_managed_installer(REFIID riid, void **ppv)
++{
++    struct ManagedInstallerImpl *This = malloc(sizeof(*This));
++    if (!This) return E_OUTOFMEMORY;
++
++    This->IUnknown_iface.lpVtbl = (IUnknownVtbl *)&ManagedInstallerVtbl;
++    This->ref = 1;
++
++    *ppv = &This->IUnknown_iface;
++    return S_OK;
++}
++
+ STDAPI ClrCreateManagedInstance(LPCWSTR pTypeName, REFIID riid, void **ppObject)
+ {
+     HRESULT ret;
+@@ -601,28 +671,44 @@ STDAPI ClrCreateManagedInstance(LPCWSTR pTypeName, REFIID riid, void **ppObject)
+
+     TRACE("(%s,%s,%p)\n", debugstr_w(pTypeName), debugstr_guid(riid), ppObject);
+
++    if (IsEqualGUID(riid, &IID_IManagedInstaller) || (pTypeName && wcsstr(pTypeName, L"ManagedInstallerClass")))
++    {
++        TRACE("Creating builtin ManagedInstaller fallback object\n");
++        return create_managed_installer(riid, ppObject);
++    }
++
+     /* FIXME: How to determine which runtime version to use? */
+     ret = get_runtime_info(NULL, NULL, NULL, NULL, 0, RUNTIME_INFO_UPGRADE_VERSION, TRUE, &info);
++    TRACE("get_runtime_info returned %#lx\n", ret);
+
+     if (SUCCEEDED(ret))
+     {
+         ret = ICLRRuntimeInfo_GetRuntimeHost(info, &host);
++        TRACE("ICLRRuntimeInfo_GetRuntimeHost returned %#lx\n", ret);
+
+         ICLRRuntimeInfo_Release(info);
+     }
+
+     if (SUCCEEDED(ret))
++    {
+         ret = RuntimeHost_CreateManagedInstance(host, pTypeName, NULL, &obj);
++        TRACE("RuntimeHost_CreateManagedInstance returned %#lx\n", ret);
++    }
+
+     if (SUCCEEDED(ret))
++    {
+         ret = RuntimeHost_GetIUnknownForObject(host, obj, &unk);
++        TRACE("RuntimeHost_GetIUnknownForObject returned %#lx\n", ret);
++    }
+
+     if (SUCCEEDED(ret))
+     {
+         ret = IUnknown_QueryInterface(unk, riid, ppObject);
++        TRACE("IUnknown_QueryInterface returned %#lx\n", ret);
+         IUnknown_Release(unk);
+     }
+
++    TRACE("returning %#lx\n", ret);
+     return ret;
+ }
+
