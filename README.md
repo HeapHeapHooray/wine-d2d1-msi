@@ -62,6 +62,30 @@ The patch implements `CLRRuntimeInfo_GetProcAddress` to look up procedures expor
 
 In `dlls/wined3d/adapter_vk.c`, `adapter_vk_alloc_bo()` unconditionally called `wined3d_bo_vk_map()` when allocating Vulkan buffer objects. For GPU-only buffers allocated without `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT`, this caused `vkMapMemory()` to fail with `VK_ERROR_MEMORY_MAP_FAILED`, producing allocation errors (`ERR("Failed to map bo.\n")`) and breaking Direct3D backend setup in Kontakt 8 under Wine's Vulkan backend. The patch checks for `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT` before attempting to map buffer objects.
 
+## The WMI & Mono System.Management.dll fixes (Crow Hill App / ROOTS Instruments)
+
+Applications using WinSW or .NET installation services (`crowhillinstallservice.exe`, ROOTS Instruments) rely on WMI (`Win32_Service.Create`) and Mono's `System.Management.dll` P/Invoke binding to `wminet_utils.dll`.
+
+1. **Native Engine Patches**:
+   - `patches/0010-wbemprox-implement-Win32_Service-Create-and-fix-wmic.mypatch`: Implements `Win32_Service.Create` method calls and `co->record` signature handling in `wbemprox.dll`, and fixes `wmic.exe` formatting.
+   - `patches/0011-wminet_utils-implement-COM-delegate-forwarding-and-_f-exports.mypatch`: Implements COM delegate forwarding methods (`GetMethod`, `GetNames`, `SpawnInstance`, `SetSecurity`, etc.) and exports all `_f` aliases in `wminet_utils.dll`.
+
+2. **Mono System.Management.dll Binder Script**:
+   - `scripts/patch_system_management.cs`: Replaces Mono's default `LoadPlatformNotSupportedDelegates()` stub in `System.Management.dll` (which throws `PlatformNotSupportedException`) with a dynamic `LoadLibraryW`/`GetProcAddress` P/Invoke loader that binds Mono's WMI delegates directly to Wine's native `wminet_utils.dll`.
+
+### Usage for `scripts/patch_system_management.cs`
+
+To patch a target prefix or bundled `System.Management.dll`:
+
+```bash
+wine mcs -r:"C:\windows\mono\mono-2.0\lib\mono\gac\Mono.Cecil\0.11.1.0__0738eb9f132ed756\Mono.Cecil.dll" \
+         -r:System.Management.dll \
+         scripts/patch_system_management.cs \
+         -out:patch_system_management.exe
+
+wine patch_system_management.exe "path/to/target/System.Management.dll"
+```
+
 ## Build
 
 ### Locally
