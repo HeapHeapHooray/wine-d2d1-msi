@@ -108,6 +108,6 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 - d2d1/dcomp patch series: **giang17** — [github.com/giang17/wine](https://github.com/giang17/wine)
 - Standalone packaging this base is taken from: [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 - MSI string-pool analysis + patch, and this build tooling: **Kimi K3** (Moonshot AI)
-- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix) & mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix): **Gemini 3.6 Flash** (Google DeepMind)
+- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix): **Gemini 3.6 Flash** (Google DeepMind)
 
 License: LGPL-2.1-or-later, same as Wine.
