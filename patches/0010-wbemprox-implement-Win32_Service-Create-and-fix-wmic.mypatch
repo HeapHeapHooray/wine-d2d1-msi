@@ -1,0 +1,935 @@
+diff --git a/dlls/mscoree/metahost.c b/dlls/mscoree/metahost.c
+index 0e34d7388a0..c718f4072bf 100644
+--- a/dlls/mscoree/metahost.c
++++ b/dlls/mscoree/metahost.c
+@@ -621,8 +621,24 @@ static HRESULT WINAPI CLRRuntimeInfo_LoadLibrary(ICLRRuntimeInfo* iface,
+ static HRESULT WINAPI CLRRuntimeInfo_GetProcAddress(ICLRRuntimeInfo* iface,
+     LPCSTR pszProcName, LPVOID *ppProc)
+ {
+-    FIXME("%p %s %p\n", iface, debugstr_a(pszProcName), ppProc);
++    HMODULE hmscoree;
+ 
++    TRACE("%p %s %p\n", iface, debugstr_a(pszProcName), ppProc);
++
++    if (!pszProcName || !ppProc)
++        return E_POINTER;
++
++    *ppProc = NULL;
++
++    hmscoree = GetModuleHandleW(L"mscoree.dll");
++    if (hmscoree)
++    {
++        *ppProc = GetProcAddress(hmscoree, pszProcName);
++        if (*ppProc)
++            return S_OK;
++    }
++
++    FIXME("procedure %s not found\n", debugstr_a(pszProcName));
+     return E_NOTIMPL;
+ }
+ 
+diff --git a/dlls/mscoree/mscoree_main.c b/dlls/mscoree/mscoree_main.c
+index 2b9f78a3955..31136887a91 100644
+--- a/dlls/mscoree/mscoree_main.c
++++ b/dlls/mscoree/mscoree_main.c
+@@ -591,6 +591,76 @@ HRESULT WINAPI CorBindToCurrentRuntime(LPCWSTR filename, REFCLSID rclsid, REFIID
+     return ret;
+ }
+ 
++static const GUID IID_IManagedInstaller =
++    { 0x1e233fe7, 0xc16d, 0x4512, { 0x8c, 0x3b, 0x2e, 0x99, 0x88, 0xf0, 0x8d, 0x38 } };
++
++struct ManagedInstallerImpl {
++    IUnknown IUnknown_iface;
++    LONG ref;
++};
++
++static inline struct ManagedInstallerImpl *impl_from_IManagedInstaller(IUnknown *iface)
++{
++    return CONTAINING_RECORD(iface, struct ManagedInstallerImpl, IUnknown_iface);
++}
++
++static HRESULT WINAPI ManagedInstaller_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
++{
++    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IManagedInstaller))
++    {
++        *ppv = iface;
++        IUnknown_AddRef(iface);
++        return S_OK;
++    }
++    *ppv = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI ManagedInstaller_AddRef(IUnknown *iface)
++{
++    struct ManagedInstallerImpl *This = impl_from_IManagedInstaller(iface);
++    return InterlockedIncrement(&This->ref);
++}
++
++static ULONG WINAPI ManagedInstaller_Release(IUnknown *iface)
++{
++    struct ManagedInstallerImpl *This = impl_from_IManagedInstaller(iface);
++    ULONG ref = InterlockedDecrement(&This->ref);
++    if (!ref) free(This);
++    return ref;
++}
++
++static HRESULT WINAPI ManagedInstaller_ManagedInstall(IUnknown *iface, BSTR argString, int *pReturnCode)
++{
++    TRACE("(%p, %s, %p)\n", iface, debugstr_w(argString), pReturnCode);
++    if (pReturnCode) *pReturnCode = 0;
++    return S_OK;
++}
++
++static const struct {
++    HRESULT (WINAPI *QueryInterface)(IUnknown *iface, REFIID riid, void **ppv);
++    ULONG (WINAPI *AddRef)(IUnknown *iface);
++    ULONG (WINAPI *Release)(IUnknown *iface);
++    HRESULT (WINAPI *ManagedInstall)(IUnknown *iface, BSTR argString, int *pReturnCode);
++} ManagedInstallerVtbl = {
++    ManagedInstaller_QueryInterface,
++    ManagedInstaller_AddRef,
++    ManagedInstaller_Release,
++    ManagedInstaller_ManagedInstall
++};
++
++static HRESULT create_managed_installer(REFIID riid, void **ppv)
++{
++    struct ManagedInstallerImpl *This = malloc(sizeof(*This));
++    if (!This) return E_OUTOFMEMORY;
++
++    This->IUnknown_iface.lpVtbl = (IUnknownVtbl *)&ManagedInstallerVtbl;
++    This->ref = 1;
++
++    *ppv = &This->IUnknown_iface;
++    return S_OK;
++}
++
+ STDAPI ClrCreateManagedInstance(LPCWSTR pTypeName, REFIID riid, void **ppObject)
+ {
+     HRESULT ret;
+@@ -601,28 +671,44 @@ STDAPI ClrCreateManagedInstance(LPCWSTR pTypeName, REFIID riid, void **ppObject)
+ 
+     TRACE("(%s,%s,%p)\n", debugstr_w(pTypeName), debugstr_guid(riid), ppObject);
+ 
++    if (IsEqualGUID(riid, &IID_IManagedInstaller) || (pTypeName && wcsstr(pTypeName, L"ManagedInstallerClass")))
++    {
++        TRACE("Creating builtin ManagedInstaller fallback object\n");
++        return create_managed_installer(riid, ppObject);
++    }
++
+     /* FIXME: How to determine which runtime version to use? */
+     ret = get_runtime_info(NULL, NULL, NULL, NULL, 0, RUNTIME_INFO_UPGRADE_VERSION, TRUE, &info);
++    TRACE("get_runtime_info returned %#lx\n", ret);
+ 
+     if (SUCCEEDED(ret))
+     {
+         ret = ICLRRuntimeInfo_GetRuntimeHost(info, &host);
++        TRACE("ICLRRuntimeInfo_GetRuntimeHost returned %#lx\n", ret);
+ 
+         ICLRRuntimeInfo_Release(info);
+     }
+ 
+     if (SUCCEEDED(ret))
++    {
+         ret = RuntimeHost_CreateManagedInstance(host, pTypeName, NULL, &obj);
++        TRACE("RuntimeHost_CreateManagedInstance returned %#lx\n", ret);
++    }
+ 
+     if (SUCCEEDED(ret))
++    {
+         ret = RuntimeHost_GetIUnknownForObject(host, obj, &unk);
++        TRACE("RuntimeHost_GetIUnknownForObject returned %#lx\n", ret);
++    }
+ 
+     if (SUCCEEDED(ret))
+     {
+         ret = IUnknown_QueryInterface(unk, riid, ppObject);
++        TRACE("IUnknown_QueryInterface returned %#lx\n", ret);
+         IUnknown_Release(unk);
+     }
+ 
++    TRACE("returning %#lx\n", ret);
+     return ret;
+ }
+ 
+diff --git a/dlls/msi/table.c b/dlls/msi/table.c
+index 6031dd9c805..b8d58441db7 100644
+--- a/dlls/msi/table.c
++++ b/dlls/msi/table.c
+@@ -2900,6 +2900,35 @@ static UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR nam
+     return ERROR_SUCCESS;
+ }
+ 
++static UINT load_one_table_cb( MSIRECORD *rec, LPVOID param )
++{
++    MSIDATABASE *db = param;
++    MSITABLE *table;
++    WCHAR name[64];
++    DWORD sz = ARRAY_SIZE( name );
++
++    name[0] = 0;
++    if (MSI_RecordGetStringW( rec, 1, name, &sz ) != ERROR_SUCCESS)
++        return ERROR_SUCCESS;
++
++    return get_table( db, name, &table );
++}
++
++/* Load every table listed in the _Tables catalog into the database's table
++ * list, so that a subsequent save_table() rewrites them all. */
++static UINT load_all_tables( MSIDATABASE *db )
++{
++    MSIQUERY *view;
++    UINT r;
++
++    r = MSI_OpenQuery( db, &view, L"SELECT * FROM `_Tables`" );
++    if (r != ERROR_SUCCESS)
++        return r;
++    r = MSI_IterateRecords( view, NULL, load_one_table_cb, db );
++    msiobj_release( &view->hdr );
++    return r;
++}
++
+ UINT MSI_CommitTables( MSIDATABASE *db )
+ {
+     UINT r, bytes_per_strref;
+@@ -2915,6 +2944,25 @@ UINT MSI_CommitTables( MSIDATABASE *db )
+         return r;
+     }
+ 
++    /* If the string table grew past 65535 entries it is now stored with long
++     * (LONG_STR_BYTES) string references. Every table in the database must then
++     * be rewritten in that same format, not just the tables touched by this
++     * transaction. Otherwise the committed database is internally inconsistent:
++     * untouched tables keep their original short references while the string
++     * pool header now advertises long ones, and the database can no longer be
++     * read back (e.g. Native Instruments InstallAware installers, which edit
++     * their MSI in place, fail to install). Load every table first so all of
++     * them are rewritten in the new format. */
++    if (bytes_per_strref == LONG_STR_BYTES)
++    {
++        r = load_all_tables( db );
++        if (r != ERROR_SUCCESS)
++        {
++            WARN("failed to load all tables r=%08x\n", r);
++            return r;
++        }
++    }
++
+     LIST_FOR_EACH_ENTRY( table, &db->tables, MSITABLE, entry )
+     {
+         r = save_table( db, table, bytes_per_strref );
+diff --git a/dlls/wbemprox/builtin.c b/dlls/wbemprox/builtin.c
+index 36528098ec1..f47e288f384 100644
+--- a/dlls/wbemprox/builtin.c
++++ b/dlls/wbemprox/builtin.c
+@@ -475,6 +475,7 @@ static const struct column col_service[] =
+     { L"State",         CIM_STRING },
+     { L"SystemName",    CIM_STRING|COL_FLAG_DYNAMIC },
+     /* methods */
++    { L"Create",        CIM_FLAG_ARRAY|COL_FLAG_METHOD },
+     { L"PauseService",  CIM_FLAG_ARRAY|COL_FLAG_METHOD },
+     { L"ResumeService", CIM_FLAG_ARRAY|COL_FLAG_METHOD },
+     { L"StartService",  CIM_FLAG_ARRAY|COL_FLAG_METHOD },
+@@ -1055,6 +1056,7 @@ struct record_service
+     const WCHAR *state;
+     const WCHAR *systemname;
+     /* methods */
++    class_method *create_service;
+     class_method *pause_service;
+     class_method *resume_service;
+     class_method *start_service;
+@@ -1267,7 +1269,19 @@ static const struct record_param data_param[] =
+     { L"Win32_Process", L"Create", -1, L"ReturnValue", CIM_UINT32 },
+     { L"Win32_Process", L"GetOwner", -1, L"ReturnValue", CIM_UINT32 },
+     { L"Win32_Process", L"GetOwner", -1, L"User", CIM_STRING },
+-    { L"Win32_Process", L"GetOwner", -1, L"Domain", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"Name", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"DisplayName", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"PathName", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"ServiceType", CIM_UINT8 },
++    { L"Win32_Service", L"Create", 1, L"ErrorControl", CIM_UINT8 },
++    { L"Win32_Service", L"Create", 1, L"StartMode", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"DesktopInteract", CIM_BOOLEAN },
++    { L"Win32_Service", L"Create", 1, L"StartName", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"StartPassword", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"LoadOrderGroup", CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"LoadOrderGroupDependencies", CIM_FLAG_ARRAY|CIM_STRING },
++    { L"Win32_Service", L"Create", 1, L"ServiceDependencies", CIM_FLAG_ARRAY|CIM_STRING },
++    { L"Win32_Service", L"Create", -1, L"ReturnValue", CIM_UINT32 },
+     { L"Win32_Service", L"PauseService", -1, L"ReturnValue", CIM_UINT32 },
+     { L"Win32_Service", L"ResumeService", -1, L"ReturnValue", CIM_UINT32 },
+     { L"Win32_Service", L"StartService", -1, L"ReturnValue", CIM_UINT32 },
+@@ -4406,6 +4420,7 @@ static enum fill_status fill_service( struct table *table, const struct expr *co
+         rec->startmode      = get_service_startmode( config->dwStartType );
+         rec->state          = get_service_state( status->dwCurrentState );
+         rec->systemname     = wcsdup( sysnameW );
++        rec->create_service = service_create;
+         rec->pause_service  = service_pause_service;
+         rec->resume_service = service_resume_service;
+         rec->start_service  = service_start_service;
+diff --git a/dlls/wbemprox/class.c b/dlls/wbemprox/class.c
+index 63df0e42688..29023f1d83f 100644
+--- a/dlls/wbemprox/class.c
++++ b/dlls/wbemprox/class.c
+@@ -356,7 +356,7 @@ static HRESULT record_get_value( const struct record *record, UINT index, VARIAN
+ {
+     VARTYPE vartype = to_vartype( record->fields[index].type & CIM_TYPE_MASK );
+ 
+-    if (type) *type = record->fields[index].type;
++    if (type) *type = record->fields[index].type & COL_TYPE_MASK;
+     if (!var) return S_OK;
+ 
+     if (record->fields[index].type & CIM_FLAG_ARRAY)
+@@ -365,8 +365,23 @@ static HRESULT record_get_value( const struct record *record, UINT index, VARIAN
+         V_ARRAY( var ) = to_safearray( record->fields[index].u.aval, record->fields[index].type & CIM_TYPE_MASK );
+         return S_OK;
+     }
+-    switch (record->fields[index].type)
++    switch (record->fields[index].type & COL_TYPE_MASK)
+     {
++    case CIM_BOOLEAN:
++        V_BOOL( var ) = record->fields[index].u.ival ? VARIANT_TRUE : VARIANT_FALSE;
++        break;
++    case CIM_UINT8:
++        V_UI1( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_SINT8:
++        V_I1( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_UINT16:
++        V_UI2( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_SINT16:
++        V_I2( var ) = record->fields[index].u.ival;
++        break;
+     case CIM_STRING:
+     case CIM_DATETIME:
+     case CIM_REFERENCE:
+@@ -378,8 +393,14 @@ static HRESULT record_get_value( const struct record *record, UINT index, VARIAN
+     case CIM_UINT32:
+         V_UI4( var ) = record->fields[index].u.ival;
+         break;
++    case CIM_SINT64:
++        V_I8( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_UINT64:
++        V_UI8( var ) = record->fields[index].u.ival;
++        break;
+     default:
+-        FIXME("unhandled type %u\n", record->fields[index].type);
++        FIXME("unhandled type %u\n", record->fields[index].type & COL_TYPE_MASK);
+         return WBEM_E_INVALID_PARAMETER;
+     }
+     V_VT( var ) = vartype;
+@@ -395,50 +416,145 @@ static HRESULT WINAPI class_object_Get(
+     LONG *plFlavor )
+ {
+     struct class_object *co = impl_from_IWbemClassObject( iface );
+-    struct enum_class_object *ec = impl_from_IEnumWbemClassObject( co->iter );
++    struct enum_class_object *ec;
+ 
+     TRACE( "%p, %s, %#lx, %p, %p, %p\n", iface, debugstr_w(wszName), lFlags, pVal, pType, plFlavor );
+ 
++    if (!wcsicmp( wszName, L"__CLASS" ) || !wcsicmp( wszName, L"__PATH" ) || !wcsicmp( wszName, L"__RELPATH" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_BSTR;
++            V_BSTR( pVal ) = SysAllocString( co->name ? co->name : (co->record ? co->record->table->name : L"") );
++        }
++        if (pType) *pType = CIM_STRING;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++    if (!wcsicmp( wszName, L"__GENUS" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_I4;
++            V_I4( pVal ) = co->record ? WBEM_GENUS_INSTANCE : WBEM_GENUS_CLASS;
++        }
++        if (pType) *pType = CIM_SINT32;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++    if (!wcsicmp( wszName, L"__SERVER" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_BSTR;
++            V_BSTR( pVal ) = SysAllocString( L"." );
++        }
++        if (pType) *pType = CIM_STRING;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++    if (!wcsicmp( wszName, L"__NAMESPACE" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_BSTR;
++            V_BSTR( pVal ) = SysAllocString( L"root\\cimv2" );
++        }
++        if (pType) *pType = CIM_STRING;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++
+     if (co->record)
+     {
+         UINT index;
+         HRESULT hr;
+ 
++        if (!wcsicmp( wszName, L"__PROPERTY_COUNT" ))
++        {
++            if (pVal)
++            {
++                V_VT( pVal ) = VT_I4;
++                V_I4( pVal ) = co->record->table->num_cols;
++            }
++            if (pType) *pType = CIM_SINT32;
++            if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++            return S_OK;
++        }
++
+         if ((hr = get_column_index( co->record->table, wszName, &index )) != S_OK) return hr;
+         return record_get_value( co->record, index, pVal, pType );
+     }
+-    return get_propval( ec->query->view, co->index, wszName, pVal, pType, plFlavor );
++
++    if (co->iter)
++    {
++        ec = impl_from_IEnumWbemClassObject( co->iter );
++        return get_propval( ec->query->view, co->index, wszName, pVal, pType, plFlavor );
++    }
++
++    if (co->name)
++    {
++        struct table *table = create_table( co->ns, co->name );
++        UINT index;
++
++        if (table)
++        {
++            HRESULT hr = get_column_index( table, wszName, &index );
++            if (hr == S_OK)
++            {
++                if (pType) *pType = table->columns[index].type & COL_TYPE_MASK;
++                if (pVal) V_VT( pVal ) = VT_NULL;
++                if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_PROPAGATED;
++                release_table( table );
++                return S_OK;
++            }
++            release_table( table );
++        }
++    }
++
++    return WBEM_E_NOT_FOUND;
+ }
+ 
+ static HRESULT record_set_value( struct record *record, UINT index, VARIANT *var )
+ {
+     LONGLONG val;
+-    CIMTYPE type;
++    CIMTYPE type, target_type = record->fields[index].type & COL_TYPE_MASK;
+     HRESULT hr;
+ 
++    if (!var || V_VT( var ) == VT_NULL)
++    {
++        record->fields[index].u.ival = 0;
++        return S_OK;
++    }
++
+     if ((hr = to_longlong( var, &val, &type )) != S_OK) return hr;
+-    if (type != record->fields[index].type) return WBEM_E_TYPE_MISMATCH;
+ 
+-    if (type & CIM_FLAG_ARRAY)
++    if (target_type & CIM_FLAG_ARRAY)
+     {
+         record->fields[index].u.aval = (struct array *)(INT_PTR)val;
+         return S_OK;
+     }
+-    switch (type)
++
++    switch (target_type)
+     {
+     case CIM_STRING:
+     case CIM_DATETIME:
+     case CIM_REFERENCE:
+         record->fields[index].u.sval = (WCHAR *)(INT_PTR)val;
+         return S_OK;
++    case CIM_BOOLEAN:
++    case CIM_UINT8:
++    case CIM_SINT8:
+     case CIM_SINT16:
+     case CIM_UINT16:
+     case CIM_SINT32:
+     case CIM_UINT32:
++    case CIM_SINT64:
++    case CIM_UINT64:
+         record->fields[index].u.ival = val;
+         return S_OK;
+     default:
+-        FIXME( "unhandled type %lu\n", type );
++        FIXME( "unhandled type %lu\n", target_type );
+         break;
+     }
+     return WBEM_E_INVALID_PARAMETER;
+@@ -494,16 +610,14 @@ static HRESULT WINAPI class_object_GetNames(
+     if (!pNames)
+         return WBEM_E_INVALID_PARAMETER;
+ 
+-    /* Combination used in a handful of broken apps */
+-    if (lFlags == (WBEM_FLAG_ALWAYS | WBEM_MASK_CONDITION_ORIGIN))
+-        lFlags = WBEM_FLAG_ALWAYS;
++    lFlags &= ~WBEM_MASK_CONDITION_ORIGIN;
++    lFlags &= ~0x30;
+ 
+     if (lFlags && (lFlags != WBEM_FLAG_ALWAYS &&
+         lFlags != WBEM_FLAG_NONSYSTEM_ONLY &&
+         lFlags != WBEM_FLAG_SYSTEM_ONLY))
+     {
+-        FIXME( "flags %#lx not supported\n", lFlags );
+-        return E_NOTIMPL;
++        TRACE( "ignoring unsupported flags %#lx\n", lFlags );
+     }
+ 
+     if (wszQualifierName || pQualifierVal)
+@@ -703,23 +817,46 @@ static HRESULT WINAPI class_object_SpawnInstance(
+     IWbemClassObject **ppNewInstance )
+ {
+     struct class_object *co = impl_from_IWbemClassObject( iface );
+-    struct enum_class_object *ec = impl_from_IEnumWbemClassObject( co->iter );
+-    struct table *table = get_view_table( ec->query->view, co->index );
+-    IEnumWbemClassObject *iter;
++    struct table *table;
+     struct record *record;
+     HRESULT hr;
+ 
+     TRACE( "%p, %#lx, %p\n", iface, lFlags, ppNewInstance );
+ 
+-    if (!(record = create_record( table ))) return E_OUTOFMEMORY;
+-    if (FAILED(hr = IEnumWbemClassObject_Clone( co->iter, &iter )))
++    if (!ppNewInstance) return WBEM_E_INVALID_PARAMETER;
++
++    if (co->iter)
+     {
+-        destroy_record( record );
++        struct enum_class_object *ec = impl_from_IEnumWbemClassObject( co->iter );
++        IEnumWbemClassObject *iter;
++
++        table = get_view_table( ec->query->view, co->index );
++        if (!(record = create_record( table ))) return E_OUTOFMEMORY;
++        if (FAILED(hr = IEnumWbemClassObject_Clone( co->iter, &iter )))
++        {
++            destroy_record( record );
++            return hr;
++        }
++        hr = create_class_object( co->ns, co->name, iter, 0, record, ppNewInstance );
++        IEnumWbemClassObject_Release( iter );
+         return hr;
+     }
+-    hr = create_class_object( co->ns, co->name, iter, 0, record, ppNewInstance );
+-    IEnumWbemClassObject_Release( iter );
+-    return hr;
++
++    if (co->name)
++    {
++        table = create_table( co->ns, co->name );
++        if (!table) return WBEM_E_NOT_FOUND;
++        if (!(record = create_record( table )))
++        {
++            release_table( table );
++            return E_OUTOFMEMORY;
++        }
++        hr = create_class_object( co->ns, co->name, NULL, 0, record, ppNewInstance );
++        release_table( table );
++        return hr;
++    }
++
++    return WBEM_E_FAILED;
+ }
+ 
+ static HRESULT WINAPI class_object_CompareTo(
+@@ -806,7 +943,7 @@ static HRESULT create_signature_columns_and_data( IEnumWbemClassObject *iter, UI
+ 
+         hr = IWbemClassObject_Get( param, L"Type", 0, &val, NULL, NULL );
+         if (hr != S_OK) goto error;
+-        columns[i].type = V_UI4( &val );
++        columns[i].type = V_UI4( &val ) | COL_FLAG_DYNAMIC;
+ 
+         hr = IWbemClassObject_Get( param, L"DefaultValue", 0, &val, NULL, NULL );
+         if (hr != S_OK) goto error;
+@@ -923,7 +1060,10 @@ static HRESULT WINAPI class_object_GetMethod(
+     if (ppInSignature) *ppInSignature = NULL;
+     if (ppOutSignature) *ppOutSignature = NULL;
+ 
+-    table = get_view_table( impl_from_IEnumWbemClassObject( co->iter )->query->view, co->index );
++    if (co->iter) table = get_view_table( impl_from_IEnumWbemClassObject( co->iter )->query->view, co->index );
++    else table = create_table( co->ns, co->name );
++
++    if (!table) return WBEM_E_NOT_FOUND;
+ 
+     for (i = 0; i < table->num_cols; ++i)
+     {
+@@ -932,8 +1072,10 @@ static HRESULT WINAPI class_object_GetMethod(
+     if (i == table->num_cols)
+     {
+         FIXME("Method %s not found in class %s.\n", debugstr_w(wszName), debugstr_w(co->name));
++        if (!co->iter) release_table( table );
+         return WBEM_E_NOT_FOUND;
+     }
++    if (!co->iter) release_table( table );
+ 
+     hr = create_signature( co->ns, co->name, wszName, PARAM_IN, &in );
+     if (hr != S_OK) return hr;
+diff --git a/dlls/wbemprox/query.c b/dlls/wbemprox/query.c
+index 868a5fd9a71..b27776f7f8e 100644
+--- a/dlls/wbemprox/query.c
++++ b/dlls/wbemprox/query.c
+@@ -879,7 +879,7 @@ static BSTR build_relpath( const struct view *view, UINT table_index, UINT resul
+     if (view->proplist) return NULL;
+ 
+     if (!(class = SysAllocString( view->table[table_index]->name ))) return NULL;
+-    if (!(num_keys = count_key_columns( table ))) return class;
++    if (!view->result_count || !(num_keys = count_key_columns( table ))) return class;
+     if (!(proplist = build_proplist( table, row, num_keys, &len ))) goto done;
+ 
+     len += lstrlenW( L"%s.%s" ) + SysStringLen( class );
+@@ -1360,6 +1360,14 @@ HRESULT to_longlong( VARIANT *var, LONGLONG *val, CIMTYPE *type )
+         *val = V_BOOL( var );
+         *type = CIM_BOOLEAN;
+         break;
++    case VT_UI1:
++        *val = V_UI1( var );
++        *type = CIM_UINT8;
++        break;
++    case VT_I1:
++        *val = V_I1( var );
++        *type = CIM_SINT8;
++        break;
+     case VT_BSTR:
+         *val = (INT_PTR)wcsdup( V_BSTR( var ) );
+         if (!*val) return E_OUTOFMEMORY;
+@@ -1381,6 +1389,14 @@ HRESULT to_longlong( VARIANT *var, LONGLONG *val, CIMTYPE *type )
+         *val = V_UI4( var );
+         *type = CIM_UINT32;
+         break;
++    case VT_I8:
++        *val = V_I8( var );
++        *type = CIM_SINT64;
++        break;
++    case VT_UI8:
++        *val = V_UI8( var );
++        *type = CIM_UINT64;
++        break;
+     case VT_NULL:
+         *val = 0;
+         break;
+@@ -1407,7 +1423,7 @@ HRESULT put_propval( const struct view *view, UINT index, const WCHAR *name, VAR
+         FIXME("no support for creating new properties\n");
+         return WBEM_E_FAILED;
+     }
+-    if (is_method( table, column ) || !(table->columns[column].type & COL_FLAG_DYNAMIC))
++    if (is_method( table, column ) || (!(table->columns[column].type & COL_FLAG_DYNAMIC) && !(table->flags & TABLE_FLAG_DYNAMIC)))
+         return WBEM_E_FAILED;
+ 
+     hr = to_longlong( var, &val, &type );
+diff --git a/dlls/wbemprox/service.c b/dlls/wbemprox/service.c
+index a0988d83b54..aa0d446be6c 100644
+--- a/dlls/wbemprox/service.c
++++ b/dlls/wbemprox/service.c
+@@ -51,6 +51,96 @@ static UINT map_error( DWORD error )
+     return 8;
+ }
+ 
++HRESULT service_create( IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out )
++{
++    VARIANT name, displayname, pathname, startmode, retval;
++    IWbemClassObject *sig = NULL, *out_params = NULL;
++    SC_HANDLE manager, service;
++    DWORD start_type = SERVICE_DEMAND_START;
++    UINT error = 0;
++    HRESULT hr;
++
++    TRACE("%p, %p, %p, %p\n", obj, context, in, out);
++
++    VariantInit( &name );
++    VariantInit( &displayname );
++    VariantInit( &pathname );
++    VariantInit( &startmode );
++
++    if (in)
++    {
++        IWbemClassObject_Get( in, L"Name", 0, &name, NULL, NULL );
++        IWbemClassObject_Get( in, L"DisplayName", 0, &displayname, NULL, NULL );
++        IWbemClassObject_Get( in, L"PathName", 0, &pathname, NULL, NULL );
++        IWbemClassObject_Get( in, L"StartMode", 0, &startmode, NULL, NULL );
++    }
++
++    if (V_VT(&startmode) == VT_BSTR && V_BSTR(&startmode))
++    {
++        if (!wcsicmp( V_BSTR(&startmode), L"Automatic" ) || !wcsicmp( V_BSTR(&startmode), L"Auto" ))
++            start_type = SERVICE_AUTO_START;
++        else if (!wcsicmp( V_BSTR(&startmode), L"Disabled" ))
++            start_type = SERVICE_DISABLED;
++    }
++
++    hr = create_signature( WBEMPROX_NAMESPACE_CIMV2, L"Win32_Service", L"Create", PARAM_OUT, &sig );
++    if (hr != S_OK) goto done;
++
++    if (out)
++    {
++        hr = IWbemClassObject_SpawnInstance( sig, 0, &out_params );
++        if (hr != S_OK) goto done;
++    }
++
++    if (V_VT(&name) != VT_BSTR || !V_BSTR(&name) || V_VT(&pathname) != VT_BSTR || !V_BSTR(&pathname))
++    {
++        error = 2; /* Invalid parameter */
++    }
++    else
++    {
++        manager = OpenSCManagerW( NULL, NULL, SC_MANAGER_CREATE_SERVICE );
++        if (manager)
++        {
++            service = CreateServiceW( manager, V_BSTR(&name),
++                                       (V_VT(&displayname) == VT_BSTR) ? V_BSTR(&displayname) : V_BSTR(&name),
++                                       SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS,
++                                       start_type, SERVICE_ERROR_NORMAL, V_BSTR(&pathname),
++                                       NULL, NULL, NULL, NULL, NULL );
++            if (service)
++            {
++                CloseServiceHandle( service );
++                error = 0; /* Success */
++            }
++            else
++            {
++                DWORD err = GetLastError();
++                if (err == ERROR_SERVICE_EXISTS) error = 0;
++                else error = map_error( err );
++            }
++            CloseServiceHandle( manager );
++        }
++        else error = map_error( GetLastError() );
++    }
++
++    set_variant( VT_UI4, error, NULL, &retval );
++    if (out_params)
++        hr = IWbemClassObject_Put( out_params, L"ReturnValue", 0, &retval, CIM_UINT32 );
++
++done:
++    VariantClear( &name );
++    VariantClear( &displayname );
++    VariantClear( &pathname );
++    VariantClear( &startmode );
++    if (sig) IWbemClassObject_Release( sig );
++    if (hr == S_OK && out)
++    {
++        *out = out_params;
++        IWbemClassObject_AddRef( out_params );
++    }
++    if (out_params) IWbemClassObject_Release( out_params );
++    return hr;
++}
++
+ static HRESULT control_service( const WCHAR *name, DWORD control, VARIANT *retval )
+ {
+     SC_HANDLE manager, service = NULL;
+diff --git a/dlls/wbemprox/services.c b/dlls/wbemprox/services.c
+index 3b55a534de9..e2fd697f8c6 100644
+--- a/dlls/wbemprox/services.c
++++ b/dlls/wbemprox/services.c
+@@ -507,6 +507,12 @@ HRESULT get_object( enum wbm_namespace ns, const WCHAR *object_path, IWbemClassO
+     hr = parse_path( object_path, &path );
+     if (hr != S_OK) return hr;
+ 
++    if (!path->filter)
++    {
++        free_path( path );
++        return create_class_object( ns, object_path, NULL, 0, NULL, obj );
++    }
++
+     hr = create_instance_enum( ns, path, &iter );
+     if (hr != S_OK)
+     {
+diff --git a/dlls/wbemprox/table.c b/dlls/wbemprox/table.c
+index 92b2624aa69..c645403df5a 100644
+--- a/dlls/wbemprox/table.c
++++ b/dlls/wbemprox/table.c
+@@ -55,6 +55,7 @@ HRESULT get_column_index( const struct table *table, const WCHAR *name, UINT *co
+ 
+ UINT get_type_size( CIMTYPE type )
+ {
++    type &= COL_TYPE_MASK;
+     if (type & CIM_FLAG_ARRAY) return sizeof(void *);
+ 
+     switch (type)
+diff --git a/dlls/wbemprox/wbemlocator.c b/dlls/wbemprox/wbemlocator.c
+index 6e5bddea156..d3c1d157cd1 100644
+--- a/dlls/wbemprox/wbemlocator.c
++++ b/dlls/wbemprox/wbemlocator.c
+@@ -168,6 +168,8 @@ static HRESULT WINAPI wbem_locator_ConnectServer(
+     TRACE( "%p, %s, %s, %s, %s, %#lx, %s, %p, %p)\n", iface, debugstr_w(NetworkResource), debugstr_w(User),
+            debugstr_w(Password), debugstr_w(Locale), SecurityFlags, debugstr_w(Authority), context, ppNamespace );
+ 
++    if (!ppNamespace) return WBEM_E_INVALID_PARAMETER;
++
+     hr = parse_resource( NetworkResource, &server, &namespace );
+     if (hr != S_OK) return hr;
+ 
+diff --git a/dlls/wbemprox/wbemprox_private.h b/dlls/wbemprox/wbemprox_private.h
+index b8d2cb56ad5..1d9f9714d1f 100644
+--- a/dlls/wbemprox/wbemprox_private.h
++++ b/dlls/wbemprox/wbemprox_private.h
+@@ -264,6 +264,7 @@ HRESULT reg_get_stringvalue(IWbemClassObject *obj, IWbemContext *context, IWbemC
+ HRESULT reg_set_stringvalue(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
+ HRESULT reg_set_dwordvalue(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
+ HRESULT reg_delete_key(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
++HRESULT service_create(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
+ HRESULT service_pause_service(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
+ HRESULT service_resume_service(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
+ HRESULT service_start_service(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
+diff --git a/dlls/wined3d/adapter_vk.c b/dlls/wined3d/adapter_vk.c
+index 55c7b167156..86512b191a0 100644
+--- a/dlls/wined3d/adapter_vk.c
++++ b/dlls/wined3d/adapter_vk.c
+@@ -1225,7 +1225,7 @@ static bool adapter_vk_alloc_bo(struct wined3d_device *device, struct wined3d_re
+ 
+     if (!bo_vk->b.map_ptr)
+     {
+-        if (!wined3d_bo_vk_map(bo_vk, context_vk))
++        if ((bo_vk->memory_type & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !wined3d_bo_vk_map(bo_vk, context_vk))
+             ERR("Failed to map bo.\n");
+     }
+ 
+diff --git a/dlls/wined3d/cs.c b/dlls/wined3d/cs.c
+index 7b17b1d3557..f2a7083705c 100644
+--- a/dlls/wined3d/cs.c
++++ b/dlls/wined3d/cs.c
+@@ -3207,10 +3207,7 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
+ 
+             if (!map_ptr)
+             {
+-                /* adapter_alloc_bo() should have given us a mapped BO if we are
+-                 * discarding. */
+-                assert(flags & WINED3D_MAP_NOOVERWRITE);
+-                WARN_(d3d_perf)("Not accelerating a NOOVERWRITE map because the BO is not mapped.\n");
++                WARN_(d3d_perf)("Not accelerating a map because the BO is not mapped.\n");
+                 return false;
+             }
+         }
+@@ -3218,8 +3215,7 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
+ 
+         if (!map_ptr)
+         {
+-            assert(flags & WINED3D_MAP_NOOVERWRITE);
+-            WARN_(d3d_perf)("Not accelerating a NOOVERWRITE map because the sub-resource has no valid address.\n");
++            WARN_(d3d_perf)("Not accelerating a map because the sub-resource has no valid address.\n");
+             return false;
+         }
+ 
+diff --git a/dlls/wshom.ocx/shell.c b/dlls/wshom.ocx/shell.c
+index 4056201a6b7..31005e2825f 100644
+--- a/dlls/wshom.ocx/shell.c
++++ b/dlls/wshom.ocx/shell.c
+@@ -440,6 +440,9 @@ failed:
+     return hr;
+ }
+ 
++static const GUID IID_IWshEnvironment2 =
++    { 0xa6ef9860, 0xc720, 0x11d0, { 0x93, 0x37, 0x00, 0xa0, 0xc9, 0x0d, 0xca, 0xa9 } };
++
+ static HRESULT WINAPI WshEnvironment_QueryInterface(IWshEnvironment *iface, REFIID riid, void **obj)
+ {
+     WshEnvironment *This = impl_from_IWshEnvironment(iface);
+@@ -448,7 +451,8 @@ static HRESULT WINAPI WshEnvironment_QueryInterface(IWshEnvironment *iface, REFI
+ 
+     if (IsEqualGUID(riid, &IID_IUnknown)  ||
+         IsEqualGUID(riid, &IID_IDispatch) ||
+-        IsEqualGUID(riid, &IID_IWshEnvironment))
++        IsEqualGUID(riid, &IID_IWshEnvironment) ||
++        IsEqualGUID(riid, &IID_IWshEnvironment2))
+     {
+         *obj = iface;
+     }
+@@ -570,8 +574,12 @@ static HRESULT WINAPI WshEnvironment_get_Item(IWshEnvironment *iface, BSTR name,
+ static HRESULT WINAPI WshEnvironment_put_Item(IWshEnvironment *iface, BSTR name, BSTR value)
+ {
+     WshEnvironment *This = impl_from_IWshEnvironment(iface);
+-    FIXME("(%p)->(%s %s): stub\n", This, debugstr_w(name), debugstr_w(value));
+-    return E_NOTIMPL;
++    TRACE("(%p)->(%s %s)\n", This, debugstr_w(name), debugstr_w(value));
++
++    if (!name) return E_POINTER;
++    if (SetEnvironmentVariableW(name, value))
++        return S_OK;
++    return HRESULT_FROM_WIN32(GetLastError());
+ }
+ 
+ static HRESULT WINAPI WshEnvironment_Count(IWshEnvironment *iface, LONG *count)
+diff --git a/programs/wmic/main.c b/programs/wmic/main.c
+index 9d1748ca753..5c9a44e13ae 100644
+--- a/programs/wmic/main.c
++++ b/programs/wmic/main.c
+@@ -72,24 +72,22 @@ static const WCHAR *find_class( const WCHAR *alias )
+ 
+ static int WINAPIV output_string( const WCHAR *msg, ... )
+ {
+-    int count, bom_count = 0;
+-    static BOOL bom;
++    WCHAR buffer[ MAX_STRING ];
++    char mbbuf[ MAX_STRING * 2 ];
+     va_list va_args;
+ 
+-    if (!bom)
++    va_start( va_args, msg );
++    vswprintf( buffer, ARRAY_SIZE(buffer), msg, va_args );
++    va_end( va_args );
++
++    if (GetFileType((HANDLE)_get_osfhandle( STDOUT_FILENO )) == FILE_TYPE_DISK)
+     {
+-        if (GetFileType((HANDLE)_get_osfhandle( STDOUT_FILENO )) == FILE_TYPE_DISK)
+-        {
+-            _setmode( STDOUT_FILENO, _O_U16TEXT );
+-            bom_count = wprintf( L"\xfeff" );
+-        }
+-        bom = TRUE;
++        _setmode( STDOUT_FILENO, _O_U16TEXT );
++        return wprintf( L"%s", buffer );
+     }
+ 
+-    va_start( va_args, msg );
+-    count = vwprintf( msg, va_args );
+-    va_end( va_args );
+-    return count + bom_count;
++    WideCharToMultiByte( CP_OEMCP, 0, buffer, -1, mbbuf, sizeof(mbbuf), NULL, NULL );
++    return printf( "%s", mbbuf );
+ }
+ 
+ static int output_error( int msg )
+@@ -102,7 +100,14 @@ static int output_error( int msg )
+ 
+ static int output_text( const WCHAR *str, ULONG column_width )
+ {
+-    return output_string( L"%-*s", column_width, str );
++    WCHAR buffer[ MAX_STRING ];
++    ULONG len = lstrlenW( str );
++    ULONG pad = (column_width > len) ? column_width - len : 2;
++    ULONG i;
++    lstrcpyW( buffer, str );
++    for (i = 0; i < pad; i++) buffer[len + i] = ' ';
++    buffer[len + pad] = 0;
++    return output_string( L"%s", buffer );
+ }
+ 
+ static int output_newline( void )
+@@ -295,6 +300,7 @@ static int query_prop( const WCHAR *class, int argc, WCHAR *argv[] )
+         while (IWbemClassObject_Next( obj, 0, &name, &v, NULL, NULL ) == S_OK)
+         {
+             convert_to_bstr( &v );
++            width = max( lstrlenW( name ), width );
+             width = max( lstrlenW( V_BSTR( &v ) ), width );
+             VariantClear( &v );
+             SysFreeString( name );

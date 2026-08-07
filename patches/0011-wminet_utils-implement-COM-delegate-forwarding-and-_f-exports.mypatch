@@ -1,0 +1,576 @@
+diff --git a/dlls/wbemprox/class.c b/dlls/wbemprox/class.c
+index 63df0e42688..59166979052 100644
+--- a/dlls/wbemprox/class.c
++++ b/dlls/wbemprox/class.c
+@@ -356,7 +356,7 @@ static HRESULT record_get_value( const struct record *record, UINT index, VARIAN
+ {
+     VARTYPE vartype = to_vartype( record->fields[index].type & CIM_TYPE_MASK );
+ 
+-    if (type) *type = record->fields[index].type;
++    if (type) *type = record->fields[index].type & COL_TYPE_MASK;
+     if (!var) return S_OK;
+ 
+     if (record->fields[index].type & CIM_FLAG_ARRAY)
+@@ -365,8 +365,23 @@ static HRESULT record_get_value( const struct record *record, UINT index, VARIAN
+         V_ARRAY( var ) = to_safearray( record->fields[index].u.aval, record->fields[index].type & CIM_TYPE_MASK );
+         return S_OK;
+     }
+-    switch (record->fields[index].type)
++    switch (record->fields[index].type & COL_TYPE_MASK)
+     {
++    case CIM_BOOLEAN:
++        V_BOOL( var ) = record->fields[index].u.ival ? VARIANT_TRUE : VARIANT_FALSE;
++        break;
++    case CIM_UINT8:
++        V_UI1( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_SINT8:
++        V_I1( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_UINT16:
++        V_UI2( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_SINT16:
++        V_I2( var ) = record->fields[index].u.ival;
++        break;
+     case CIM_STRING:
+     case CIM_DATETIME:
+     case CIM_REFERENCE:
+@@ -378,8 +393,14 @@ static HRESULT record_get_value( const struct record *record, UINT index, VARIAN
+     case CIM_UINT32:
+         V_UI4( var ) = record->fields[index].u.ival;
+         break;
++    case CIM_SINT64:
++        V_I8( var ) = record->fields[index].u.ival;
++        break;
++    case CIM_UINT64:
++        V_UI8( var ) = record->fields[index].u.ival;
++        break;
+     default:
+-        FIXME("unhandled type %u\n", record->fields[index].type);
++        FIXME("unhandled type %u\n", record->fields[index].type & COL_TYPE_MASK);
+         return WBEM_E_INVALID_PARAMETER;
+     }
+     V_VT( var ) = vartype;
+@@ -395,50 +416,145 @@ static HRESULT WINAPI class_object_Get(
+     LONG *plFlavor )
+ {
+     struct class_object *co = impl_from_IWbemClassObject( iface );
+-    struct enum_class_object *ec = impl_from_IEnumWbemClassObject( co->iter );
++    struct enum_class_object *ec;
+ 
+     TRACE( "%p, %s, %#lx, %p, %p, %p\n", iface, debugstr_w(wszName), lFlags, pVal, pType, plFlavor );
+ 
++    if (!wcsicmp( wszName, L"__CLASS" ) || !wcsicmp( wszName, L"__PATH" ) || !wcsicmp( wszName, L"__RELPATH" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_BSTR;
++            V_BSTR( pVal ) = SysAllocString( co->name ? co->name : (co->record ? co->record->table->name : L"") );
++        }
++        if (pType) *pType = CIM_STRING;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++    if (!wcsicmp( wszName, L"__GENUS" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_I4;
++            V_I4( pVal ) = co->record ? WBEM_GENUS_INSTANCE : WBEM_GENUS_CLASS;
++        }
++        if (pType) *pType = CIM_SINT32;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++    if (!wcsicmp( wszName, L"__SERVER" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_BSTR;
++            V_BSTR( pVal ) = SysAllocString( L"." );
++        }
++        if (pType) *pType = CIM_STRING;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++    if (!wcsicmp( wszName, L"__NAMESPACE" ))
++    {
++        if (pVal)
++        {
++            V_VT( pVal ) = VT_BSTR;
++            V_BSTR( pVal ) = SysAllocString( L"root\\cimv2" );
++        }
++        if (pType) *pType = CIM_STRING;
++        if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++        return S_OK;
++    }
++
+     if (co->record)
+     {
+         UINT index;
+         HRESULT hr;
+ 
++        if (!wcsicmp( wszName, L"__PROPERTY_COUNT" ))
++        {
++            if (pVal)
++            {
++                V_VT( pVal ) = VT_I4;
++                V_I4( pVal ) = co->record->table->num_cols;
++            }
++            if (pType) *pType = CIM_SINT32;
++            if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_SYSTEM;
++            return S_OK;
++        }
++
+         if ((hr = get_column_index( co->record->table, wszName, &index )) != S_OK) return hr;
+         return record_get_value( co->record, index, pVal, pType );
+     }
+-    return get_propval( ec->query->view, co->index, wszName, pVal, pType, plFlavor );
++
++    if (co->iter)
++    {
++        ec = impl_from_IEnumWbemClassObject( co->iter );
++        return get_propval( ec->query->view, co->index, wszName, pVal, pType, plFlavor );
++    }
++
++    if (co->name)
++    {
++        struct table *table = create_table( co->ns, co->name );
++        UINT index;
++
++        if (table)
++        {
++            HRESULT hr = get_column_index( table, wszName, &index );
++            if (hr == S_OK)
++            {
++                if (pType) *pType = table->columns[index].type & COL_TYPE_MASK;
++                if (pVal) V_VT( pVal ) = VT_NULL;
++                if (plFlavor) *plFlavor = WBEM_FLAVOR_ORIGIN_PROPAGATED;
++                release_table( table );
++                return S_OK;
++            }
++            release_table( table );
++        }
++    }
++
++    return WBEM_E_NOT_FOUND;
+ }
+ 
+ static HRESULT record_set_value( struct record *record, UINT index, VARIANT *var )
+ {
+     LONGLONG val;
+-    CIMTYPE type;
++    CIMTYPE type, target_type = record->fields[index].type & COL_TYPE_MASK;
+     HRESULT hr;
+ 
++    if (!var || V_VT( var ) == VT_NULL)
++    {
++        record->fields[index].u.ival = 0;
++        return S_OK;
++    }
++
+     if ((hr = to_longlong( var, &val, &type )) != S_OK) return hr;
+-    if (type != record->fields[index].type) return WBEM_E_TYPE_MISMATCH;
+ 
+-    if (type & CIM_FLAG_ARRAY)
++    if (target_type & CIM_FLAG_ARRAY)
+     {
+         record->fields[index].u.aval = (struct array *)(INT_PTR)val;
+         return S_OK;
+     }
+-    switch (type)
++
++    switch (target_type)
+     {
+     case CIM_STRING:
+     case CIM_DATETIME:
+     case CIM_REFERENCE:
+         record->fields[index].u.sval = (WCHAR *)(INT_PTR)val;
+         return S_OK;
++    case CIM_BOOLEAN:
++    case CIM_UINT8:
++    case CIM_SINT8:
+     case CIM_SINT16:
+     case CIM_UINT16:
+     case CIM_SINT32:
+     case CIM_UINT32:
++    case CIM_SINT64:
++    case CIM_UINT64:
+         record->fields[index].u.ival = val;
+         return S_OK;
+     default:
+-        FIXME( "unhandled type %lu\n", type );
++        FIXME( "unhandled type %lu\n", target_type );
+         break;
+     }
+     return WBEM_E_INVALID_PARAMETER;
+@@ -494,21 +610,22 @@ static HRESULT WINAPI class_object_GetNames(
+     if (!pNames)
+         return WBEM_E_INVALID_PARAMETER;
+ 
+-    /* Combination used in a handful of broken apps */
+-    if (lFlags == (WBEM_FLAG_ALWAYS | WBEM_MASK_CONDITION_ORIGIN))
+-        lFlags = WBEM_FLAG_ALWAYS;
++    lFlags &= ~WBEM_MASK_CONDITION_ORIGIN;
++    lFlags &= ~0x30;
+ 
+     if (lFlags && (lFlags != WBEM_FLAG_ALWAYS &&
+         lFlags != WBEM_FLAG_NONSYSTEM_ONLY &&
+         lFlags != WBEM_FLAG_SYSTEM_ONLY))
+     {
+-        FIXME( "flags %#lx not supported\n", lFlags );
+-        return E_NOTIMPL;
++        TRACE( "ignoring unsupported flags %#lx\n", lFlags );
+     }
+ 
+     if (wszQualifierName || pQualifierVal)
+         FIXME("qualifier not supported\n");
+ 
++    if (co->record)
++        return get_table_properties( co->record->table, lFlags, pNames );
++
+     return get_properties( ec->query->view, co->index, lFlags, pNames );
+ }
+ 
+@@ -703,23 +820,52 @@ static HRESULT WINAPI class_object_SpawnInstance(
+     IWbemClassObject **ppNewInstance )
+ {
+     struct class_object *co = impl_from_IWbemClassObject( iface );
+-    struct enum_class_object *ec = impl_from_IEnumWbemClassObject( co->iter );
+-    struct table *table = get_view_table( ec->query->view, co->index );
+-    IEnumWbemClassObject *iter;
++    struct table *table;
+     struct record *record;
+     HRESULT hr;
+ 
+     TRACE( "%p, %#lx, %p\n", iface, lFlags, ppNewInstance );
+ 
+-    if (!(record = create_record( table ))) return E_OUTOFMEMORY;
+-    if (FAILED(hr = IEnumWbemClassObject_Clone( co->iter, &iter )))
++    if (!ppNewInstance) return WBEM_E_INVALID_PARAMETER;
++
++    if (co->iter)
+     {
+-        destroy_record( record );
++        struct enum_class_object *ec = impl_from_IEnumWbemClassObject( co->iter );
++        IEnumWbemClassObject *iter;
++
++        table = get_view_table( ec->query->view, co->index );
++        if (!(record = create_record( table ))) return E_OUTOFMEMORY;
++        if (FAILED(hr = IEnumWbemClassObject_Clone( co->iter, &iter )))
++        {
++            destroy_record( record );
++            return hr;
++        }
++        hr = create_class_object( co->ns, co->name, iter, 0, record, ppNewInstance );
++        IEnumWbemClassObject_Release( iter );
+         return hr;
+     }
+-    hr = create_class_object( co->ns, co->name, iter, 0, record, ppNewInstance );
+-    IEnumWbemClassObject_Release( iter );
+-    return hr;
++
++    if (co->record)
++    {
++        if (!(record = create_record( co->record->table ))) return E_OUTOFMEMORY;
++        return create_class_object( co->ns, co->name, NULL, 0, record, ppNewInstance );
++    }
++
++    if (co->name)
++    {
++        table = create_table( co->ns, co->name );
++        if (!table) return WBEM_E_NOT_FOUND;
++        if (!(record = create_record( table )))
++        {
++            release_table( table );
++            return E_OUTOFMEMORY;
++        }
++        hr = create_class_object( co->ns, co->name, NULL, 0, record, ppNewInstance );
++        release_table( table );
++        return hr;
++    }
++
++    return WBEM_E_FAILED;
+ }
+ 
+ static HRESULT WINAPI class_object_CompareTo(
+@@ -806,7 +952,7 @@ static HRESULT create_signature_columns_and_data( IEnumWbemClassObject *iter, UI
+ 
+         hr = IWbemClassObject_Get( param, L"Type", 0, &val, NULL, NULL );
+         if (hr != S_OK) goto error;
+-        columns[i].type = V_UI4( &val );
++        columns[i].type = V_UI4( &val ) | COL_FLAG_DYNAMIC;
+ 
+         hr = IWbemClassObject_Get( param, L"DefaultValue", 0, &val, NULL, NULL );
+         if (hr != S_OK) goto error;
+@@ -923,7 +1069,10 @@ static HRESULT WINAPI class_object_GetMethod(
+     if (ppInSignature) *ppInSignature = NULL;
+     if (ppOutSignature) *ppOutSignature = NULL;
+ 
+-    table = get_view_table( impl_from_IEnumWbemClassObject( co->iter )->query->view, co->index );
++    if (co->iter) table = get_view_table( impl_from_IEnumWbemClassObject( co->iter )->query->view, co->index );
++    else table = create_table( co->ns, co->name );
++
++    if (!table) return WBEM_E_NOT_FOUND;
+ 
+     for (i = 0; i < table->num_cols; ++i)
+     {
+@@ -932,8 +1081,10 @@ static HRESULT WINAPI class_object_GetMethod(
+     if (i == table->num_cols)
+     {
+         FIXME("Method %s not found in class %s.\n", debugstr_w(wszName), debugstr_w(co->name));
++        if (!co->iter) release_table( table );
+         return WBEM_E_NOT_FOUND;
+     }
++    if (!co->iter) release_table( table );
+ 
+     hr = create_signature( co->ns, co->name, wszName, PARAM_IN, &in );
+     if (hr != S_OK) return hr;
+diff --git a/dlls/wminet_utils/main.c b/dlls/wminet_utils/main.c
+index 7af46dce1b5..081ec89ea5d 100644
+--- a/dlls/wminet_utils/main.c
++++ b/dlls/wminet_utils/main.c
+@@ -109,6 +109,13 @@ HRESULT WINAPI Get(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlag
+     return IWbemClassObject_Get(ptr, wszName, lFlags, pVal, pvtType, plFlavor);
+ }
+ 
++HRESULT WINAPI GetMethod(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlags,
++    IWbemClassObject **ppInSignature, IWbemClassObject **ppOutSignature)
++{
++    TRACE("%i %p %s %lx %p %p\n", vFunc, ptr, debugstr_w(wszName), lFlags, ppInSignature, ppOutSignature);
++    return IWbemClassObject_GetMethod(ptr, wszName, lFlags, ppInSignature, ppOutSignature);
++}
++
+ HRESULT WINAPI GetCurrentApartmentType(int vFunc, IComThreadingInfo *ptr, APTTYPE *aptType)
+ {
+     TRACE("%i %p %p\n", vFunc, ptr, aptType);
+@@ -120,3 +127,93 @@ HRESULT WINAPI Initialize(BOOLEAN bAllowIManagementObjectQI)
+     TRACE("%i\n", bAllowIManagementObjectQI);
+     return S_OK;
+ }
++
++HRESULT WINAPI GetNames(int vFunc, IWbemClassObject *ptr, LPCWSTR wszQualifierName, LONG lFlags,
++    VARIANT *pQualifierVal, SAFEARRAY **pNames)
++{
++    TRACE("%i %p %s %lx %p %p\n", vFunc, ptr, debugstr_w(wszQualifierName), lFlags, pQualifierVal, pNames);
++    return IWbemClassObject_GetNames(ptr, wszQualifierName, lFlags, pQualifierVal, pNames);
++}
++
++HRESULT WINAPI BeginEnumeration(int vFunc, IWbemClassObject *ptr, LONG lEnumFlags)
++{
++    TRACE("%i %p %lx\n", vFunc, ptr, lEnumFlags);
++    return IWbemClassObject_BeginEnumeration(ptr, lEnumFlags);
++}
++
++HRESULT WINAPI Next(int vFunc, IWbemClassObject *ptr, LONG lFlags, BSTR *strName, VARIANT *pVal,
++    CIMTYPE *pType, LONG *plFlavor)
++{
++    TRACE("%i %p %lx %p %p %p %p\n", vFunc, ptr, lFlags, strName, pVal, pType, plFlavor);
++    return IWbemClassObject_Next(ptr, lFlags, strName, pVal, pType, plFlavor);
++}
++
++HRESULT WINAPI EndEnumeration(int vFunc, IWbemClassObject *ptr)
++{
++    TRACE("%i %p\n", vFunc, ptr);
++    return IWbemClassObject_EndEnumeration(ptr);
++}
++
++HRESULT WINAPI SpawnInstance(int vFunc, IWbemClassObject *ptr, LONG lFlags, IWbemClassObject **ppNewInstance)
++{
++    TRACE("%i %p %lx %p\n", vFunc, ptr, lFlags, ppNewInstance);
++    return IWbemClassObject_SpawnInstance(ptr, lFlags, ppNewInstance);
++}
++
++HRESULT WINAPI Put(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlags, VARIANT *pVal, CIMTYPE Type)
++{
++    TRACE("%i %p %s %lx %p %lu\n", vFunc, ptr, debugstr_w(wszName), lFlags, pVal, Type);
++    return IWbemClassObject_Put(ptr, wszName, lFlags, pVal, Type);
++}
++
++HRESULT WINAPI GetQualifierSet(int vFunc, IWbemClassObject *ptr, IWbemQualifierSet **ppQualSet)
++{
++    TRACE("%i %p %p\n", vFunc, ptr, ppQualSet);
++    return IWbemClassObject_GetQualifierSet(ptr, ppQualSet);
++}
++
++HRESULT WINAPI QualifierSet_GetNames(int vFunc, IWbemQualifierSet *ptr, LPCWSTR wszQualifierName, LONG lFlags,
++    VARIANT *pQualifierVal, SAFEARRAY **pNames)
++{
++    TRACE("%i %p %s %lx %p %p\n", vFunc, ptr, debugstr_w(wszQualifierName), lFlags, pQualifierVal, pNames);
++    return IWbemQualifierSet_GetNames(ptr, lFlags, pNames);
++}
++
++HRESULT WINAPI QualifierSet_Get(int vFunc, IWbemQualifierSet *ptr, LPCWSTR wszName, LONG lFlags,
++    VARIANT *pVal, LONG *plFlavor)
++{
++    TRACE("%i %p %s %lx %p %p\n", vFunc, ptr, debugstr_w(wszName), lFlags, pVal, plFlavor);
++    return IWbemQualifierSet_Get(ptr, wszName, lFlags, pVal, plFlavor);
++}
++
++HRESULT WINAPI ResetSecurity(HANDLE hToken)
++{
++    return S_OK;
++}
++
++HRESULT WINAPI SetSecurity(BOOL *pNeedToReset, HANDLE *pHandle)
++{
++    if (pNeedToReset) *pNeedToReset = FALSE;
++    return S_OK;
++}
++
++HRESULT WINAPI BlessIWbemServices(void *pIUnknown, const WCHAR *user, void *password, const WCHAR *auth, int imp, int authn)
++{
++    return S_OK;
++}
++
++HRESULT WINAPI BlessIWbemServicesObject(void *pIUnknown, const WCHAR *user, void *password, const WCHAR *auth, int imp, int authn)
++{
++    return S_OK;
++}
++
++HRESULT WINAPI GetDemultiplexedStub(void *pUnk, BOOL local, void **ppUnk)
++{
++    if (ppUnk) *ppUnk = pUnk;
++    return S_OK;
++}
++
++HRESULT WINAPI VerifyClientKey(void)
++{
++    return S_OK;
++}
+diff --git a/dlls/wminet_utils/wminet_utils.spec b/dlls/wminet_utils/wminet_utils.spec
+index 4cc7536b310..896d57b9d37 100644
+--- a/dlls/wminet_utils/wminet_utils.spec
++++ b/dlls/wminet_utils/wminet_utils.spec
+@@ -1,65 +1,114 @@
+-@ stub BeginEnumeration
++@ stdcall BeginEnumeration(long ptr long)
++@ stdcall BeginEnumeration_f(long ptr long) BeginEnumeration
+ @ stub BeginMethodEnumeration
+-@ stub BlessIWbemServices
+-@ stub BlessIWbemServicesObject
++@ stub BeginMethodEnumeration_f
++@ stdcall BlessIWbemServices(ptr wstr ptr wstr long long)
++@ stdcall BlessIWbemServices_f(ptr wstr ptr wstr long long) BlessIWbemServices
++@ stdcall BlessIWbemServicesObject(ptr wstr ptr wstr long long)
++@ stdcall BlessIWbemServicesObject_f(ptr wstr ptr wstr long long) BlessIWbemServicesObject
+ @ stub Clone
++@ stub Clone_f
+ @ stdcall CloneEnumWbemClassObject(ptr long long ptr wstr wstr wstr)
++@ stdcall CloneEnumWbemClassObject_f(ptr long long ptr wstr wstr wstr) CloneEnumWbemClassObject
+ @ stub CompareTo
++@ stub CompareTo_f
+ @ stdcall ConnectServerWmi(wstr wstr wstr wstr long wstr ptr ptr long long)
++@ stdcall ConnectServerWmi_f(wstr wstr wstr wstr long wstr ptr ptr long long) ConnectServerWmi
+ @ stub CreateClassEnumWmi
++@ stub CreateClassEnumWmi_f
+ @ stdcall CreateInstanceEnumWmi(wstr long ptr ptr long long ptr wstr wstr wstr)
++@ stdcall CreateInstanceEnumWmi_f(wstr long ptr ptr long long ptr wstr wstr wstr) CreateInstanceEnumWmi
+ @ stub Delete
+ @ stub DeleteMethod
++@ stub DeleteMethod_f
+ @ stub DllCanUnloadNow
+ @ stub DllGetClassObject
+ @ stub DllRegisterServer
+ @ stub DllUnregisterServer
+-@ stub EndEnumeration
++@ stdcall EndEnumeration(long ptr)
++@ stdcall EndEnumeration_f(long ptr) EndEnumeration
+ @ stub EndMethodEnumeration
++@ stub EndMethodEnumeration_f
+ @ stub ExecNotificationQueryWmi
++@ stub ExecNotificationQueryWmi_f
+ @ stdcall ExecQueryWmi(wstr wstr long ptr ptr long long ptr wstr wstr wstr)
++@ stdcall ExecQueryWmi_f(wstr wstr long ptr ptr long long ptr wstr wstr wstr) ExecQueryWmi
+ @ stdcall Get(long ptr wstr long ptr ptr ptr)
++@ stdcall Get_f(long ptr wstr long ptr ptr ptr) Get
+ @ stdcall GetCurrentApartmentType(long ptr ptr)
+-@ stub GetDemultiplexedStub
++@ stdcall GetCurrentApartmentType_f(long ptr ptr) GetCurrentApartmentType
++@ stdcall GetDemultiplexedStub(ptr long ptr)
++@ stdcall GetDemultiplexedStub_f(ptr long ptr) GetDemultiplexedStub
+ @ stub GetErrorInfo
+-@ stub GetMethod
++@ stub GetErrorInfo_f
++@ stdcall GetMethod(long ptr wstr long ptr ptr)
++@ stdcall GetMethod_f(long ptr wstr long ptr ptr) GetMethod
+ @ stub GetMethodOrigin
++@ stub GetMethodOrigin_f
+ @ stub GetMethodQualifierSet
+-@ stub GetNames
++@ stub GetMethodQualifierSet_f
++@ stdcall GetNames(long ptr wstr long ptr ptr)
++@ stdcall GetNames_f(long ptr wstr long ptr ptr) GetNames
+ @ stub GetObjectText
++@ stub GetObjectText_f
+ @ stub GetPropertyHandle
++@ stub GetPropertyHandle_f27
+ @ stub GetPropertyInfoByHandle
+ @ stub GetPropertyOrigin
++@ stub GetPropertyOrigin_f
+ @ stub GetPropertyQualifierSet
+-@ stub GetQualifierSet
++@ stub GetPropertyQualifierSet_f
++@ stdcall GetQualifierSet(long ptr ptr)
++@ stdcall GetQualifierSet_f(long ptr ptr) GetQualifierSet
+ @ stub InheritsFrom
++@ stub InheritsFrom_f
+ @ stdcall Initialize(long)
++@ stdcall Initialize_f(long) Initialize
+ @ stub Lock
+-@ stub Next
++@ stdcall Next(long ptr long ptr ptr ptr ptr)
++@ stdcall Next_f(long ptr long ptr ptr ptr ptr) Next
+ @ stub NextMethod
+-@ stub Put
++@ stub NextMethod_f
++@ stdcall Put(long ptr wstr long ptr long)
++@ stdcall Put_f(long ptr wstr long ptr long) Put
+ @ stub PutClassWmi
++@ stub PutClassWmi_f
+ @ stub PutInstanceWmi
++@ stub PutInstanceWmi_f
+ @ stub PutMethod
++@ stub PutMethod_f
+ @ stub QualifierSet_BeginEnumeration
++@ stub QualifierBeginEnumeration_f
+ @ stub QualifierSet_Delete
++@ stub QualifierDelete_f
+ @ stub QualifierSet_EndEnumeration
+-@ stub QualifierSet_Get
+-@ stub QualifierSet_GetNames
++@ stub QualifierEndEnumeration_f
++@ stdcall QualifierSet_Get(long ptr wstr long ptr ptr)
++@ stdcall QualifierGet_f(long ptr wstr long ptr ptr) QualifierSet_Get
++@ stdcall QualifierSet_GetNames(long ptr wstr long ptr ptr)
++@ stdcall QualifierGetNames_f(long ptr wstr long ptr ptr) QualifierSet_GetNames
+ @ stub QualifierSet_Next
++@ stub QualifierNext_f
+ @ stub QualifierSet_Put
++@ stub QualifierPut_f
+ @ stub ReadDWORD
+ @ stub ReadPropertyValue
+ @ stub ReadQWORD
+-@ stub ResetSecurity
+-@ stub SetSecurity
++@ stdcall ResetSecurity(ptr)
++@ stdcall ResetSecurity_f(ptr) ResetSecurity
++@ stdcall SetSecurity(ptr ptr)
++@ stdcall SetSecurity_f(ptr ptr) SetSecurity
+ @ stub SpawnDerivedClass
+-@ stub SpawnInstance
++@ stub SpawnDerivedClass_f
++@ stdcall SpawnInstance(long ptr long ptr)
++@ stdcall SpawnInstance_f(long ptr long ptr) SpawnInstance
+ @ stub UFunc
+ @ stub Unlock
+-@ stub VerifyClientKey
++@ stdcall VerifyClientKey()
++@ stdcall VerifyClientKey_f() VerifyClientKey
+ @ stub WriteDWORD
+ @ stub WriteDouble
+ @ stub WritePropertyValue
++@ stub WritePropertyValue_f28
+ @ stub WriteQWORD
+ @ stub WriteSingle
