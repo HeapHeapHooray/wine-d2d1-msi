@@ -7,9 +7,9 @@
 A standalone **Wine 11.0** runner built from [giang17](https://github.com/giang17/wine)'s
 `d2d1-dcomp-11.0` branch — the same Direct2D 1.3 + DirectComposition patch series that
 fixes JUCE 8 / VSTGUI / SynthEdit plugin GUIs rendering as **black windows** under Wine
-(Pianoteq 9, Serum 2, Korg Trinity/Prophecy, EZkeys 2, Garritan CFX, …) — **plus** an
-additional patch that fixes Wine's MSI string-table corruption, which breaks **Native
-Instruments InstallAware installers** (Kontakt 8, …).
+(Pianoteq 9, Serum 2, Korg Trinity/Prophecy, EZkeys 2, Garritan CFX, …) — **plus**
+additional patches that fix Wine's MSI string-table corruption, managed installers, and WMI/service infrastructure,
+fixing applications like **Kontakt 8**, **Crow Hill App**, and **ROOTS Instruments**.
 
 This is the **non-Soda** sibling of [HeapHeapHooray/soda-d2d1](https://github.com/HeapHeapHooray/soda-d2d1):
 the same d2d1/dcomp functionality, but built on giang17's **plain Wine 11.0** branch
@@ -29,6 +29,9 @@ packages) instead of Valve's Proton/Soda tree.
   - `patches/0007-msi-rewrite-all-tables-on-long-strref.mypatch` — the MSI fix.
   - `patches/0008-wined3d-only-map-host-visible-bo.mypatch` — the wined3d Vulkan buffer mapping fix for Kontakt 8 D3D backend.
   - `patches/0009-mscoree-implement-CLRRuntimeInfo_GetProcAddress-and-IManagedInstaller.mypatch` — the mscoree fix for VS/WiX managed installer Custom Actions (e.g., Heavyocity Portal / HPWin2126.msi).
+  - `patches/0010-wbemprox-implement-Win32_Service-Create-and-fix-wmic.mypatch` — `wbemprox` implementation of `Win32_Service.Create` and `wmic.exe` formatting fix for Crow Hill App, ROOTS Instruments, etc.
+  - `patches/0011-wminet_utils-implement-COM-delegate-forwarding-and-_f-exports.mypatch` — `wminet_utils.dll` COM methods and `_f` export aliases for Mono `System.Management.dll` P/Invokes (Crow Hill App, ROOTS Instruments, WinSW services).
+  - `scripts/patch_system_management.cs` — Mono `System.Management.dll` P/Invoke binder script.
 
 ## The MSI fix (Option A)
 
