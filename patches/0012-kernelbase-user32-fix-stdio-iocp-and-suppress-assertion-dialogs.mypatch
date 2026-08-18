@@ -1,3 +1,18 @@
+diff --git a/dlls/kernelbase/file.c b/dlls/kernelbase/file.c
+index 83977a2c40b..1fddd2062c3 100644
+--- a/dlls/kernelbase/file.c
++++ b/dlls/kernelbase/file.c
+@@ -3307,9 +3307,9 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFileType( HANDLE file )
+     case FILE_DEVICE_SERIAL_PORT:
+     case FILE_DEVICE_PARALLEL_PORT:
+     case FILE_DEVICE_TAPE:
+-    case FILE_DEVICE_UNKNOWN:
+         return FILE_TYPE_CHAR;
+     case FILE_DEVICE_NAMED_PIPE:
++    case FILE_DEVICE_UNKNOWN:
+         return FILE_TYPE_PIPE;
+     default:
+         return FILE_TYPE_DISK;
 diff --git a/dlls/kernelbase/sync.c b/dlls/kernelbase/sync.c
 index 94036acfad4..a79d6366029 100644
 --- a/dlls/kernelbase/sync.c
