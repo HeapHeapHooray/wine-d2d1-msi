@@ -1,0 +1,36 @@
+diff --git a/dlls/kernelbase/sync.c b/dlls/kernelbase/sync.c
+index 94036acfad4..a79d6366029 100644
+--- a/dlls/kernelbase/sync.c
++++ b/dlls/kernelbase/sync.c
+@@ -1238,6 +1238,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateIoCompletionPort( HANDLE handle, HANDLE po
+         if (!set_ntstatus( NtSetInformationFile( handle, &iosb, &info, sizeof(info), FileCompletionInformation )))
+         {
+             if (!port) CloseHandle( ret );
++            SetLastError( ERROR_INVALID_PARAMETER );
+             return 0;
+         }
+     }
+diff --git a/dlls/user32/msgbox.c b/dlls/user32/msgbox.c
+index 009f3858c60..a95ae0eef1f 100644
+--- a/dlls/user32/msgbox.c
++++ b/dlls/user32/msgbox.c
+@@ -523,6 +523,19 @@ INT WINAPI MessageBoxIndirectW( LPMSGBOXPARAMSW msgbox )
+     UINT i;
+     struct ThreadWindows threadWindows;
+ 
++    if (!IS_INTRESOURCE(msgbox->lpszCaption) && msgbox->lpszCaption)
++    {
++        if (wcsstr(msgbox->lpszCaption, L"Assertion failed") ||
++            wcsstr(msgbox->lpszCaption, L"Visual C++ Runtime Library"))
++        {
++            if ((msgbox->dwStyle & MB_TYPEMASK) == MB_ABORTRETRYIGNORE)
++            {
++                WARN("Auto-ignoring assertion dialog: %s\n", debugstr_w(msgbox->lpszCaption));
++                return IDIGNORE;
++            }
++        }
++    }
++
+     if (!(hRes = FindResourceExW(user32_module, (LPWSTR)RT_DIALOG, L"MSGBOX", msgbox->dwLanguageId)))
+     {
+         if (!msgbox->dwLanguageId ||

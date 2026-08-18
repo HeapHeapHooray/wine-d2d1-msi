@@ -31,6 +31,7 @@ packages) instead of Valve's Proton/Soda tree.
   - `patches/0009-mscoree-implement-CLRRuntimeInfo_GetProcAddress-and-IManagedInstaller.mypatch` — the mscoree fix for VS/WiX managed installer Custom Actions (e.g., Heavyocity Portal / HPWin2126.msi).
   - `patches/0010-wbemprox-implement-Win32_Service-Create-and-fix-wmic.mypatch` — `wbemprox` implementation of `Win32_Service.Create` and `wmic.exe` formatting fix for Crow Hill App, ROOTS Instruments, etc.
   - `patches/0011-wminet_utils-implement-COM-delegate-forwarding-and-_f-exports.mypatch` — `wminet_utils.dll` COM methods and `_f` export aliases for Mono `System.Management.dll` P/Invokes (Crow Hill App, ROOTS Instruments, WinSW services).
+  - `patches/0012-kernelbase-user32-fix-stdio-iocp-and-suppress-assertion-dialogs.mypatch` — `kernelbase` fix for `CreateIoCompletionPort` stdio pipe error code (`EINVAL: invalid argument, uv_pipe_open` fix for embedded Node.js/libuv React plugin UIs) and `user32` assertion dialog auto-ignore.
   - `scripts/patch_system_management.cs` — Mono `System.Management.dll` P/Invoke binder script.
 
 ## The MSI fix (Option A)
@@ -86,6 +87,19 @@ wine mcs -r:"C:\windows\mono\mono-2.0\lib\mono\gac\Mono.Cecil\0.11.1.0__0738eb9f
 wine patch_system_management.exe "path/to/target/System.Management.dll"
 ```
 
+## The Embedded Node.js / libuv Stdio & Assertion Fixes (Pocket Strings / Gorilla Engine)
+
+Instruments using Gorilla Engine (Crow Hill plugins like Pocket Strings, Vaults, Westwood ROOTS) embed Node.js and React to render their UI.
+
+1. **Stdio IOCP Error (`EINVAL: invalid argument, uv_pipe_open`)**:
+   - In GUI DAWs like FL Studio under Wine, standard file descriptors (`stdout` / `stderr`) are synchronous pipes or unattached stdio streams.
+   - When Node.js initializes `process.stdout` / `process.stderr`, `libuv` attempts to bind the pipe to its completion port via `CreateIoCompletionPort()`. On Windows, binding synchronous handles fails with `ERROR_INVALID_PARAMETER`, which `libuv` gracefully ignores. In Wine, the kernel returned other error codes, causing `libuv` to throw `EINVAL: invalid argument, uv_pipe_open` when `console.log` was called.
+   - The patch in `dlls/kernelbase/sync.c` ensures `CreateIoCompletionPort()` sets `ERROR_INVALID_PARAMETER` on handle association failures so `libuv` and Node.js stdio streams initialize cleanly.
+
+2. **Assertion Dialog Auto-Ignore**:
+   - Debug builds of embedded `libuv` in certain plugin binaries fire assertions during UI teardown (`!(handle->flags & UV_HANDLE_CLOSING)`).
+   - The patch in `dlls/user32/msgbox.c` automatically ignores (`IDIGNORE`) MSVC runtime assertion dialogs so plugins do not freeze DAW playback or display modal abort dialogs.
+
 ## Build
 
 ### Locally
@@ -132,6 +146,6 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 - d2d1/dcomp patch series: **giang17** — [github.com/giang17/wine](https://github.com/giang17/wine)
 - Standalone packaging this base is taken from: [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 - MSI string-pool analysis + patch, and this build tooling: **Kimi K3** (Moonshot AI)
-- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix): **Gemini 3.6 Flash** (Google DeepMind)
+- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix), kernelbase stdio IOCP error fix & user32 assertion dialog auto-ignore (Pocket Strings / Gorilla Engine fix): **Gemini 3.7 Flash** (Google DeepMind)
 
 License: LGPL-2.1-or-later, same as Wine.
