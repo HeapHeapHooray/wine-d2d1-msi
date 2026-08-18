@@ -32,7 +32,7 @@ packages) instead of Valve's Proton/Soda tree.
   - `patches/0010-wbemprox-implement-Win32_Service-Create-and-fix-wmic.mypatch` — `wbemprox` implementation of `Win32_Service.Create` and `wmic.exe` formatting fix for Crow Hill App, ROOTS Instruments, etc.
   - `patches/0011-wminet_utils-implement-COM-delegate-forwarding-and-_f-exports.mypatch` — `wminet_utils.dll` COM methods and `_f` export aliases for Mono `System.Management.dll` P/Invokes (Crow Hill App, ROOTS Instruments, WinSW services).
   - `scripts/patch_system_management.cs` — Mono `System.Management.dll` P/Invoke binder script.
-  - `scripts/patch_gorilla_plugins.py` — Gorilla Engine plugin binary patch script (Pocket Strings, Vaults, ROOTS Instruments).
+  - `scripts/patch_gorilla_plugins.cs` — Gorilla Engine plugin binary patch script (Pocket Strings, Vaults, ROOTS Instruments).
 
 ## The MSI fix (Option A)
 
@@ -97,12 +97,16 @@ Instruments built with Gorilla Engine (Crow Hill plugins like Pocket Strings, Va
 2. **Assertion Failed Dialog (`!(handle->flags & UV_HANDLE_CLOSING)`)**:
    - Statically compiled debug assertions in the plugin binaries trigger an MSVC assertion dialog box (`_wassert`) during handle shutdown.
 
-### Usage for `scripts/patch_gorilla_plugins.py`
+### Usage for `scripts/patch_gorilla_plugins.cs`
 
-To scan and patch all installed Gorilla Engine plugins in a Wine prefix:
+To compile and run the patcher inside any Wine prefix (uses the built-in .NET / Mono C# compiler):
 
 ```bash
-python3 scripts/patch_gorilla_plugins.py ~/.mozapp/cheapwine/.cheapwine/drive_c/
+# Compile inside the target prefix
+wine "C:\windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" scripts/patch_gorilla_plugins.cs -out:patch_gorilla_plugins.exe
+
+# Run inside the prefix (automatically scans standard VST3/VST2/AAX plugin folders)
+wine patch_gorilla_plugins.exe
 ```
 
 ## Build
