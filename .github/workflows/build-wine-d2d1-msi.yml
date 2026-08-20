@@ -8,7 +8,7 @@ env:
   WINE_VERSION: '11.0'
   PKG_BASENAME: 'wine-d2d1-msi'
   GIANG17_REPO: 'https://github.com/giang17/wine.git'
-  GIANG17_COMMIT: '1dbc94083d1b508c3708c857b1715f9d379aa78a'
+  GIANG17_COMMIT: '46c43a2db62ceeac1b33b31bccdebda65ef7f770'
 jobs:
   build:
     runs-on: ubuntu-latest

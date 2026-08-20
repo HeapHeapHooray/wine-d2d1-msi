@@ -1,11 +1,117 @@
+diff --git a/dlls/wminet_utils/Makefile.in b/dlls/wminet_utils/Makefile.in
+new file mode 100644
+index 00000000..2df888ad
+--- /dev/null
++++ b/dlls/wminet_utils/Makefile.in
+@@ -0,0 +1,7 @@
++MODULE    = wminet_utils.dll
++IMPORTS   = ole32
++
++EXTRADLLFLAGS = -Wb,--prefer-native
++
++SOURCES = \
++	main.c
 diff --git a/dlls/wminet_utils/main.c b/dlls/wminet_utils/main.c
-index 7af46dce1b5..081ec89ea5d 100644
---- a/dlls/wminet_utils/main.c
+new file mode 100644
+index 00000000..9c970153
+--- /dev/null
 +++ b/dlls/wminet_utils/main.c
-@@ -109,6 +109,13 @@ HRESULT WINAPI Get(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlag
-     return IWbemClassObject_Get(ptr, wszName, lFlags, pVal, pvtType, plFlavor);
- }
- 
+@@ -0,0 +1,204 @@
++/*
++ * Copyright 2026 Nikolay Sivov for CodeWeavers
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include <stdarg.h>
++
++#define COBJMACROS
++
++#include "windef.h"
++#include "winbase.h"
++#include "winuser.h"
++#include "ole2.h"
++#include "wbemcli.h"
++#include "objidl.h"
++
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(wminet_utils);
++
++HRESULT WINAPI CloneEnumWbemClassObject(IEnumWbemClassObject **ppEnum, LONG lFlags, LONG lTimeout,
++        IEnumWbemClassObject *pEnum, LPCWSTR wszUser, LPCWSTR wszPassword, LPCWSTR wszAuthority)
++{
++    TRACE("%p %lx %lx %p %s %s %s\n", ppEnum, lFlags, lTimeout, pEnum, debugstr_w(wszUser),
++            debugstr_w(wszPassword), debugstr_w(wszAuthority));
++
++    return IEnumWbemClassObject_Clone(pEnum, ppEnum);
++}
++
++HRESULT WINAPI ConnectServerWmi(LPCWSTR wszNetworkResource, LPCWSTR wszUser, LPCWSTR wszPassword,
++        LPCWSTR wszLocale, LONG lSecurityFlags, LPCWSTR wszAuthority, IWbemContext *pCtx,
++        IWbemServices **ppWorkingNamespace, LONG lFlags, LONG lTimeout)
++{
++    IWbemLocator *locator;
++    HRESULT hr;
++
++    TRACE("%s %s %s %s %lx %s %p %p %lx %lx\n", debugstr_w(wszNetworkResource), debugstr_w(wszUser),
++            debugstr_w(wszPassword), debugstr_w(wszLocale), lSecurityFlags, debugstr_w(wszAuthority),
++            pCtx, ppWorkingNamespace, lFlags, lTimeout);
++
++    hr = CoCreateInstance(&CLSID_WbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (void **)&locator);
++    if (FAILED(hr))
++        return hr;
++
++    hr = IWbemLocator_ConnectServer(locator, (BSTR)wszNetworkResource, (BSTR)wszUser, (BSTR)wszPassword,
++            (BSTR)wszLocale, lSecurityFlags, (BSTR)wszAuthority, pCtx, ppWorkingNamespace);
++
++    IWbemLocator_Release(locator);
++
++    return hr;
++}
++
++HRESULT WINAPI CreateInstanceEnumWmi(LPCWSTR wszFilter, LONG lFlags, IWbemContext *pCtx,
++        IEnumWbemClassObject **ppEnum, LONG lTimeOut, LONG lSecurityFlags, LPCWSTR wszAuthority,
++        LPCWSTR wszUser, LPCWSTR wszPassword, LPCWSTR wszLocale)
++{
++    TRACE("%s %lx %p %p %lx %lx %s %s %s %s\n", debugstr_w(wszFilter), lFlags, pCtx, ppEnum,
++            lTimeOut, lSecurityFlags, debugstr_w(wszAuthority), debugstr_w(wszUser), debugstr_w(wszPassword),
++            debugstr_w(wszLocale));
++
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI ExecQueryWmi(LPCWSTR wszQueryLanguage, LPCWSTR wszQuery, LONG lFlags, IWbemContext *pCtx,
++        IEnumWbemClassObject **ppEnum, LONG lTimeOut, LONG lSecurityFlags, LPCWSTR wszAuthority,
++        LPCWSTR wszUser, LPCWSTR wszPassword, LPCWSTR wszLocale)
++{
++    TRACE("%s %s %lx %p %p %lx %lx %s %s %s %s\n", debugstr_w(wszQueryLanguage), debugstr_w(wszQuery),
++            lFlags, pCtx, ppEnum, lTimeOut, lSecurityFlags, debugstr_w(wszAuthority), debugstr_w(wszUser),
++            debugstr_w(wszPassword), debugstr_w(wszLocale));
++
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI Get(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlags, VARIANT *pVal,
++        CIMTYPE *pvtType, LONG *plFlavor)
++{
++    TRACE("%i %p %s %lx %p %p %p\n", vFunc, ptr, debugstr_w(wszName), lFlags, pVal, pvtType, plFlavor);
++
++    return IWbemClassObject_Get(ptr, wszName, lFlags, pVal, pvtType, plFlavor);
++}
++
 +HRESULT WINAPI GetMethod(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlags,
 +    IWbemClassObject **ppInSignature, IWbemClassObject **ppOutSignature)
 +{
@@ -13,13 +119,18 @@ index 7af46dce1b5..081ec89ea5d 100644
 +    return IWbemClassObject_GetMethod(ptr, wszName, lFlags, ppInSignature, ppOutSignature);
 +}
 +
- HRESULT WINAPI GetCurrentApartmentType(int vFunc, IComThreadingInfo *ptr, APTTYPE *aptType)
- {
-     TRACE("%i %p %p\n", vFunc, ptr, aptType);
-@@ -120,3 +127,93 @@ HRESULT WINAPI Initialize(BOOLEAN bAllowIManagementObjectQI)
-     TRACE("%i\n", bAllowIManagementObjectQI);
-     return S_OK;
- }
++HRESULT WINAPI GetCurrentApartmentType(int vFunc, IComThreadingInfo *ptr, APTTYPE *aptType)
++{
++    TRACE("%i %p %p\n", vFunc, ptr, aptType);
++
++    return IComThreadingInfo_GetCurrentApartmentType(ptr, aptType);
++}
++
++HRESULT WINAPI Initialize(BOOLEAN bAllowIManagementObjectQI)
++{
++    TRACE("%i\n", bAllowIManagementObjectQI);
++    return S_OK;
++}
 +
 +HRESULT WINAPI GetNames(int vFunc, IWbemClassObject *ptr, LPCWSTR wszQualifierName, LONG lFlags,
 +    VARIANT *pQualifierVal, SAFEARRAY **pNames)
@@ -111,137 +222,122 @@ index 7af46dce1b5..081ec89ea5d 100644
 +    return S_OK;
 +}
 diff --git a/dlls/wminet_utils/wminet_utils.spec b/dlls/wminet_utils/wminet_utils.spec
-index 4cc7536b310..896d57b9d37 100644
---- a/dlls/wminet_utils/wminet_utils.spec
+new file mode 100644
+index 00000000..896d57b9
+--- /dev/null
 +++ b/dlls/wminet_utils/wminet_utils.spec
-@@ -1,65 +1,114 @@
--@ stub BeginEnumeration
+@@ -0,0 +1,114 @@
 +@ stdcall BeginEnumeration(long ptr long)
 +@ stdcall BeginEnumeration_f(long ptr long) BeginEnumeration
- @ stub BeginMethodEnumeration
--@ stub BlessIWbemServices
--@ stub BlessIWbemServicesObject
++@ stub BeginMethodEnumeration
 +@ stub BeginMethodEnumeration_f
 +@ stdcall BlessIWbemServices(ptr wstr ptr wstr long long)
 +@ stdcall BlessIWbemServices_f(ptr wstr ptr wstr long long) BlessIWbemServices
 +@ stdcall BlessIWbemServicesObject(ptr wstr ptr wstr long long)
 +@ stdcall BlessIWbemServicesObject_f(ptr wstr ptr wstr long long) BlessIWbemServicesObject
- @ stub Clone
++@ stub Clone
 +@ stub Clone_f
- @ stdcall CloneEnumWbemClassObject(ptr long long ptr wstr wstr wstr)
++@ stdcall CloneEnumWbemClassObject(ptr long long ptr wstr wstr wstr)
 +@ stdcall CloneEnumWbemClassObject_f(ptr long long ptr wstr wstr wstr) CloneEnumWbemClassObject
- @ stub CompareTo
++@ stub CompareTo
 +@ stub CompareTo_f
- @ stdcall ConnectServerWmi(wstr wstr wstr wstr long wstr ptr ptr long long)
++@ stdcall ConnectServerWmi(wstr wstr wstr wstr long wstr ptr ptr long long)
 +@ stdcall ConnectServerWmi_f(wstr wstr wstr wstr long wstr ptr ptr long long) ConnectServerWmi
- @ stub CreateClassEnumWmi
++@ stub CreateClassEnumWmi
 +@ stub CreateClassEnumWmi_f
- @ stdcall CreateInstanceEnumWmi(wstr long ptr ptr long long ptr wstr wstr wstr)
++@ stdcall CreateInstanceEnumWmi(wstr long ptr ptr long long ptr wstr wstr wstr)
 +@ stdcall CreateInstanceEnumWmi_f(wstr long ptr ptr long long ptr wstr wstr wstr) CreateInstanceEnumWmi
- @ stub Delete
- @ stub DeleteMethod
++@ stub Delete
++@ stub DeleteMethod
 +@ stub DeleteMethod_f
- @ stub DllCanUnloadNow
- @ stub DllGetClassObject
- @ stub DllRegisterServer
- @ stub DllUnregisterServer
--@ stub EndEnumeration
++@ stub DllCanUnloadNow
++@ stub DllGetClassObject
++@ stub DllRegisterServer
++@ stub DllUnregisterServer
 +@ stdcall EndEnumeration(long ptr)
 +@ stdcall EndEnumeration_f(long ptr) EndEnumeration
- @ stub EndMethodEnumeration
++@ stub EndMethodEnumeration
 +@ stub EndMethodEnumeration_f
- @ stub ExecNotificationQueryWmi
++@ stub ExecNotificationQueryWmi
 +@ stub ExecNotificationQueryWmi_f
- @ stdcall ExecQueryWmi(wstr wstr long ptr ptr long long ptr wstr wstr wstr)
++@ stdcall ExecQueryWmi(wstr wstr long ptr ptr long long ptr wstr wstr wstr)
 +@ stdcall ExecQueryWmi_f(wstr wstr long ptr ptr long long ptr wstr wstr wstr) ExecQueryWmi
- @ stdcall Get(long ptr wstr long ptr ptr ptr)
++@ stdcall Get(long ptr wstr long ptr ptr ptr)
 +@ stdcall Get_f(long ptr wstr long ptr ptr ptr) Get
- @ stdcall GetCurrentApartmentType(long ptr ptr)
--@ stub GetDemultiplexedStub
++@ stdcall GetCurrentApartmentType(long ptr ptr)
 +@ stdcall GetCurrentApartmentType_f(long ptr ptr) GetCurrentApartmentType
 +@ stdcall GetDemultiplexedStub(ptr long ptr)
 +@ stdcall GetDemultiplexedStub_f(ptr long ptr) GetDemultiplexedStub
- @ stub GetErrorInfo
--@ stub GetMethod
++@ stub GetErrorInfo
 +@ stub GetErrorInfo_f
 +@ stdcall GetMethod(long ptr wstr long ptr ptr)
 +@ stdcall GetMethod_f(long ptr wstr long ptr ptr) GetMethod
- @ stub GetMethodOrigin
++@ stub GetMethodOrigin
 +@ stub GetMethodOrigin_f
- @ stub GetMethodQualifierSet
--@ stub GetNames
++@ stub GetMethodQualifierSet
 +@ stub GetMethodQualifierSet_f
 +@ stdcall GetNames(long ptr wstr long ptr ptr)
 +@ stdcall GetNames_f(long ptr wstr long ptr ptr) GetNames
- @ stub GetObjectText
++@ stub GetObjectText
 +@ stub GetObjectText_f
- @ stub GetPropertyHandle
++@ stub GetPropertyHandle
 +@ stub GetPropertyHandle_f27
- @ stub GetPropertyInfoByHandle
- @ stub GetPropertyOrigin
++@ stub GetPropertyInfoByHandle
++@ stub GetPropertyOrigin
 +@ stub GetPropertyOrigin_f
- @ stub GetPropertyQualifierSet
--@ stub GetQualifierSet
++@ stub GetPropertyQualifierSet
 +@ stub GetPropertyQualifierSet_f
 +@ stdcall GetQualifierSet(long ptr ptr)
 +@ stdcall GetQualifierSet_f(long ptr ptr) GetQualifierSet
- @ stub InheritsFrom
++@ stub InheritsFrom
 +@ stub InheritsFrom_f
- @ stdcall Initialize(long)
++@ stdcall Initialize(long)
 +@ stdcall Initialize_f(long) Initialize
- @ stub Lock
--@ stub Next
++@ stub Lock
 +@ stdcall Next(long ptr long ptr ptr ptr ptr)
 +@ stdcall Next_f(long ptr long ptr ptr ptr ptr) Next
- @ stub NextMethod
--@ stub Put
++@ stub NextMethod
 +@ stub NextMethod_f
 +@ stdcall Put(long ptr wstr long ptr long)
 +@ stdcall Put_f(long ptr wstr long ptr long) Put
- @ stub PutClassWmi
++@ stub PutClassWmi
 +@ stub PutClassWmi_f
- @ stub PutInstanceWmi
++@ stub PutInstanceWmi
 +@ stub PutInstanceWmi_f
- @ stub PutMethod
++@ stub PutMethod
 +@ stub PutMethod_f
- @ stub QualifierSet_BeginEnumeration
++@ stub QualifierSet_BeginEnumeration
 +@ stub QualifierBeginEnumeration_f
- @ stub QualifierSet_Delete
++@ stub QualifierSet_Delete
 +@ stub QualifierDelete_f
- @ stub QualifierSet_EndEnumeration
--@ stub QualifierSet_Get
--@ stub QualifierSet_GetNames
++@ stub QualifierSet_EndEnumeration
 +@ stub QualifierEndEnumeration_f
 +@ stdcall QualifierSet_Get(long ptr wstr long ptr ptr)
 +@ stdcall QualifierGet_f(long ptr wstr long ptr ptr) QualifierSet_Get
 +@ stdcall QualifierSet_GetNames(long ptr wstr long ptr ptr)
 +@ stdcall QualifierGetNames_f(long ptr wstr long ptr ptr) QualifierSet_GetNames
- @ stub QualifierSet_Next
++@ stub QualifierSet_Next
 +@ stub QualifierNext_f
- @ stub QualifierSet_Put
++@ stub QualifierSet_Put
 +@ stub QualifierPut_f
- @ stub ReadDWORD
- @ stub ReadPropertyValue
- @ stub ReadQWORD
--@ stub ResetSecurity
--@ stub SetSecurity
++@ stub ReadDWORD
++@ stub ReadPropertyValue
++@ stub ReadQWORD
 +@ stdcall ResetSecurity(ptr)
 +@ stdcall ResetSecurity_f(ptr) ResetSecurity
 +@ stdcall SetSecurity(ptr ptr)
 +@ stdcall SetSecurity_f(ptr ptr) SetSecurity
- @ stub SpawnDerivedClass
--@ stub SpawnInstance
++@ stub SpawnDerivedClass
 +@ stub SpawnDerivedClass_f
 +@ stdcall SpawnInstance(long ptr long ptr)
 +@ stdcall SpawnInstance_f(long ptr long ptr) SpawnInstance
- @ stub UFunc
- @ stub Unlock
--@ stub VerifyClientKey
++@ stub UFunc
++@ stub Unlock
 +@ stdcall VerifyClientKey()
 +@ stdcall VerifyClientKey_f() VerifyClientKey
- @ stub WriteDWORD
- @ stub WriteDouble
- @ stub WritePropertyValue
++@ stub WriteDWORD
++@ stub WriteDouble
++@ stub WritePropertyValue
 +@ stub WritePropertyValue_f28
- @ stub WriteQWORD
- @ stub WriteSingle
++@ stub WriteQWORD
++@ stub WriteSingle
