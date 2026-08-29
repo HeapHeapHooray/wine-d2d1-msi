@@ -1,0 +1,148 @@
+From: Antigravity <antigravity@google.com>
+Subject: [PATCH] opengl: Enable OpenGL, child window visual fallback, EGL window flags, and safe cursor handling
+
+1. Enable SONAME_LIBGL ("libGL.so.1") and SONAME_LIBEGL ("libEGL.so.1") in config.
+2. In visual_from_pixel_format, fallback to default_visual if visualid is 0 or visual info lookup fails.
+3. In x11drv_egl_describe_pixel_format and describe_egl_config, ensure PFD_DRAW_TO_WINDOW is set for window-drawable and onscreen formats.
+4. In create_whole_window and get_default_cursor, create cursors on the window's own display connection and wrap with non-fatal X11 error handler to prevent BadCursor crashes.
+---
+ dlls/win32u/opengl.c      |  2 +-
+ dlls/winex11.drv/mouse.c  | 16 +++-------------
+ dlls/winex11.drv/opengl.c | 15 ++++++++++++---
+ dlls/winex11.drv/window.c | 17 ++++++++++++++++-
+ dlls/winex11.drv/x11drv.h |  2 +-
+ 5 files changed, 33 insertions(+), 19 deletions(-)
+
+diff --git a/dlls/win32u/opengl.c b/dlls/win32u/opengl.c
+index 8420baa0a91..07cf79b3310 100644
+--- a/dlls/win32u/opengl.c
++++ b/dlls/win32u/opengl.c
+@@ -520,7 +520,7 @@ static BOOL describe_egl_config( EGLConfig config, struct wgl_pixel_format *fmt,
+     pfd->nSize = sizeof(*pfd);
+     pfd->nVersion = 1;
+     pfd->dwFlags = PFD_SUPPORT_OPENGL | PFD_SUPPORT_COMPOSITION | flags;
+-    if (flags && surface_type & EGL_WINDOW_BIT) pfd->dwFlags |= PFD_DRAW_TO_WINDOW;
++    if (flags || (surface_type & EGL_WINDOW_BIT)) pfd->dwFlags |= PFD_DRAW_TO_WINDOW;
+     pfd->iPixelType = PFD_TYPE_RGBA;
+     pfd->iLayerType = PFD_MAIN_PLANE;
+ 
+diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+index 0b44f6a2f2d..f15e2c375d3 100644
+--- a/dlls/winex11.drv/mouse.c
++++ b/dlls/winex11.drv/mouse.c
+@@ -201,20 +201,10 @@ static Cursor get_empty_cursor(void)
+  * inheritance chain to the owner window is severed once the window manager
+  * reparents the toplevel into a frame, leaving the cursor blank.
+  */
+-Cursor get_default_cursor(void)
++Cursor get_default_cursor( Display *display )
+ {
+-    static Cursor cursor;
+-
+-    if (!cursor)
+-    {
+-        Cursor new = XCreateFontCursor( gdi_display, XC_left_ptr );
+-        /* flush so the cursor is known to the server before another display
+-           connection (create_whole_window uses data->display) references it */
+-        XFlush( gdi_display );
+-        if (InterlockedCompareExchangePointer( (void **)&cursor, (void *)new, 0 ))
+-            XFreeCursor( gdi_display, new );
+-    }
+-    return cursor;
++    if (!display) display = gdi_display;
++    return XCreateFontCursor( display, XC_left_ptr );
+ }
+ 
+ /***********************************************************************
+diff --git a/dlls/winex11.drv/opengl.c b/dlls/winex11.drv/opengl.c
+index 01eb3b9c356..edf483f4717 100644
+--- a/dlls/winex11.drv/opengl.c
++++ b/dlls/winex11.drv/opengl.c
+@@ -492,15 +492,24 @@ BOOL visual_from_pixel_format( int format, XVisualInfo *visual )
+ 
+         memset( visual, 0, sizeof(*visual) );
+         funcs->p_eglGetConfigAttrib( egl->display, config, EGL_NATIVE_VISUAL_ID, (EGLint *)&visual->visualid );
+-        if (!(visuals = XGetVisualInfo( gdi_display, VisualIDMask, visual, &count ))) return FALSE;
+-        *visual = *visuals;
+-        XFree( visuals );
++        if (visual->visualid && (visuals = XGetVisualInfo( gdi_display, VisualIDMask, visual, &count )))
++        {
++            *visual = *visuals;
++            XFree( visuals );
++            return TRUE;
++        }
++        *visual = default_visual;
+         return TRUE;
+     }
+     else
+     {
+         struct glx_pixel_format *fmt = glx_pixel_format_from_format( format );
+-        *visual = *fmt->visual;
++        if (fmt->visual)
++        {
++            *visual = *fmt->visual;
++            return TRUE;
++        }
++        *visual = default_visual;
+         return TRUE;
+     }
+ }
+@@ -510,7 +519,7 @@ static BOOL x11drv_egl_describe_pixel_format( int format, struct wgl_pixel_forma
+     XVisualInfo visual;
+ 
+     if (!p_egl_describe_pixel_format( format, pf )) return FALSE;
+-    if (!visual_from_pixel_format( format, &visual ) || visual.depth != default_visual.depth)
++    if (visual_from_pixel_format( format, &visual ) && visual.depth != default_visual.depth)
+     {
+         /* Forbid drawing to windows with formats whose depth does not match the screen depth
+          * so that we can copy child windows on-screen using XCopyArea().
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 0926d2c9390..72fe9a2440d 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -2617,6 +2617,11 @@ Window create_client_window( HWND hwnd, RECT client_rect, const XVisualInfo *vis
+ }
+ 
+ 
++static int ignore_cursor_error( Display *display, XErrorEvent *event, void *arg )
++{
++    return (event->error_code == BadCursor || event->error_code == BadWindow || event->error_code == BadValue);
++}
++
+ /**********************************************************************
+  *		create_whole_window
+  *
+@@ -2686,7 +2691,17 @@ static void create_whole_window( struct x11drv_win_data *data )
+        never set a cursor of their own (e.g. cross-process embedded WebView2
+        surfaces) don't end up blank once WM reparenting breaks the X11 cursor
+        inheritance to the owner window */
+-    XDefineCursor( data->display, data->whole_window, get_default_cursor() );
++    {
++        Cursor default_cursor = get_default_cursor( data->display );
++        if (default_cursor)
++        {
++            X11DRV_expect_error( data->display, ignore_cursor_error, NULL );
++            XDefineCursor( data->display, data->whole_window, default_cursor );
++            XFreeCursor( data->display, default_cursor );
++            XSync( data->display, False );
++            X11DRV_check_error();
++        }
++    }
+ 
+     XFlush( data->display );  /* make sure the window exists before we start painting to it */
+ 
+diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+index b99fc35f48c..c9676643155 100644
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -214,7 +214,7 @@ extern SHORT X11DRV_VkKeyScanEx( WCHAR wChar, HKL hkl );
+ extern void X11DRV_NotifyIMEStatus( HWND hwnd, UINT status );
+ extern BOOL X11DRV_SetIMECompositionRect( HWND hwnd, RECT rect );
+ extern void X11DRV_DestroyCursorIcon( HCURSOR handle );
+-extern Cursor get_default_cursor(void);
++extern Cursor get_default_cursor( Display *display );
+ extern void X11DRV_SetCursor( HWND hwnd, HCURSOR handle );
+ extern BOOL X11DRV_SetCursorPos( INT x, INT y );
+ extern BOOL X11DRV_GetCursorPos( LPPOINT pos );
+-- 
+2.43.0

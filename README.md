@@ -31,6 +31,7 @@ packages) instead of Valve's Proton/Soda tree.
   - `patches/0009-mscoree-implement-CLRRuntimeInfo_GetProcAddress-and-IManagedInstaller.mypatch` — the mscoree fix for VS/WiX managed installer Custom Actions (e.g., Heavyocity Portal / HPWin2126.msi).
   - `patches/0010-wbemprox-implement-Win32_Service-Create-and-fix-wmic.mypatch` — `wbemprox` implementation of `Win32_Service.Create` and `wmic.exe` formatting fix for Crow Hill App, ROOTS Instruments, etc.
   - `patches/0011-wminet_utils-implement-COM-delegate-forwarding-and-_f-exports.mypatch` — `wminet_utils.dll` COM methods and `_f` export aliases for Mono `System.Management.dll` P/Invokes (Crow Hill App, ROOTS Instruments, WinSW services).
+  - `patches/0012-opengl-support-child-window-and-egl-pfd-draw-to-window.mypatch` — OpenGL child window context creation, EGL `PFD_DRAW_TO_WINDOW` pixel format flags, and safe cross-connection cursor handling for `baseview` / `glutin` plugins (fixes Copycat VST3/CLAP GUI OpenGL crashes).
   - `scripts/patch_system_management.cs` — Mono `System.Management.dll` P/Invoke binder script.
   - `scripts/patch_gorilla_plugins.cs` — Gorilla Engine plugin binary patch script (Pocket Strings, Vaults, ROOTS Instruments).
 
@@ -109,6 +110,16 @@ wine "C:\windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" scripts/patch_gor
 wine patch_gorilla_plugins.exe
 ```
 
+## The OpenGL child-window & baseview/glutin context fixes (Copycat VST3/CLAP, Rust audio plugins)
+
+Audio plugins built with Rust (`nih-plug`, `baseview`, `glutin`) such as **Copycat** create embedded `WS_CHILD` OpenGL viewports inside DAWs like FL Studio.
+
+Two issues caused OpenGL plugins to crash:
+1. `winex11.drv` and `win32u` stripped the `PFD_DRAW_TO_WINDOW` pixel format descriptor flag whenever an X visual lookup did not return a separate native visual ID for child window DCs, leaving 0 window-drawable pixel formats and causing `baseview` to panic with `Could not create OpenGL context: CreationFailed(())`.
+2. When creating child windows, attempting to assign a default font cursor across separate X display connections triggered an X11 protocol `BadCursor` fatal error in `winex11.drv`.
+
+The patch ensures all onscreen and window-capable pixel formats advertise `PFD_DRAW_TO_WINDOW`, falls back to `default_visual` when visual resolution is not directly provided, creates default window cursors on the window's own display connection, and wraps cursor operations with non-fatal X11 error handlers.
+
 ## Build
 
 ### Locally
@@ -155,6 +166,6 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 - d2d1/dcomp patch series: **giang17** — [github.com/giang17/wine](https://github.com/giang17/wine)
 - Standalone packaging this base is taken from: [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 - MSI string-pool analysis + patch, and this build tooling: **Kimi K3** (Moonshot AI)
-- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix), Gorilla Engine embedded Node.js/libuv patch script (Pocket Strings / Vaults / ROOTS Instruments fix): **Gemini 3.7 Flash** (Google DeepMind)
+- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix), Gorilla Engine embedded Node.js/libuv patch script (Pocket Strings / Vaults / ROOTS Instruments fix), OpenGL child window context creation, EGL PFD_DRAW_TO_WINDOW flags & safe cursor handling patch (Copycat / baseview / glutin OpenGL plugin fix): **Gemini 3.7 Flash** (Google DeepMind)
 
 License: LGPL-2.1-or-later, same as Wine.
