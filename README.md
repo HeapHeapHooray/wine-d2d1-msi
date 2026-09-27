@@ -34,6 +34,7 @@ packages) instead of Valve's Proton/Soda tree.
   - `patches/0012-opengl-support-child-window-and-egl-pfd-draw-to-window.mypatch` — OpenGL child window context creation, EGL `PFD_DRAW_TO_WINDOW` pixel format flags, and safe cross-connection cursor handling for `baseview` / `glutin` plugins (fixes Copycat VST3/CLAP GUI OpenGL crashes).
   - `scripts/patch_system_management.cs` — Mono `System.Management.dll` P/Invoke binder script.
   - `scripts/patch_gorilla_plugins.cs` — Gorilla Engine plugin binary patch script (Pocket Strings, Vaults, ROOTS Instruments).
+  - `scripts/patch_pianoverse.cs` — IK Multimedia Pianoverse null dereference patch script (Pianoverse Standalone, VST3, VST2, AAX).
 
 ## The MSI fix (Option A)
 
@@ -108,6 +109,20 @@ wine "C:\windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" scripts/patch_gor
 
 # Run inside the prefix (automatically scans standard VST3/VST2/AAX plugin folders)
 wine patch_gorilla_plugins.exe
+```
+
+### Usage for `scripts/patch_pianoverse.cs`
+
+IK Multimedia Pianoverse (standalone and VST3/VST2/AAX plugins) crashes on load under Wine with an unhandled page fault at `0x140683BCA` / `0x18069FE3A` (attempting to read `[rcx+0x40]` without verifying `rcx` is non-null during child window DPI/layout calculation).
+
+The patcher injects a null-pointer safeguard into the alignment padding immediately preceding the window positioning handler:
+
+```bash
+# Compile inside the target prefix
+wine "C:\windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" scripts/patch_pianoverse.cs -out:patch_pianoverse.exe
+
+# Run inside the prefix (automatically scans Pianoverse install and VST3/VST2/AAX folders)
+wine patch_pianoverse.exe
 ```
 
 ## The OpenGL child-window & baseview/glutin context fixes (Copycat VST3/CLAP, Rust audio plugins)
