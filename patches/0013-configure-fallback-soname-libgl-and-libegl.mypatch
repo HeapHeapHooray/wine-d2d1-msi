@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Antigravity <antigravity@google.com>
+Date: Mon, 28 Sep 2026 03:30:00 -0300
+Subject: [PATCH] configure: Add Linux runtime fallback for SONAME_LIBGL and SONAME_LIBEGL
+
+When Wine is built in environments without development link symlinks
+(e.g. without libgl-dev or libegl-dev installed, or in cross-compile setups),
+the configure probe linking -lGL or -lEGL fails. Wine then leaves SONAME_LIBGL
+and SONAME_LIBEGL undefined, disabling winex11.drv's OpenGL implementation
+and causing wglCreateContext / ChoosePixelFormat to fail with
+ERROR_INVALID_PIXEL_FORMAT.
+
+Since Wine dynamically loads libGL.so.1 and libEGL.so.1 at runtime via dlopen(),
+development symlinks are not required for execution. This fallback ensures
+SONAME_LIBGL ("libGL.so.1") and SONAME_LIBEGL ("libEGL.so.1") are defined on Linux,
+enabling OpenGL in DAWs and plugins (e.g. Pianoverse VST3, JUCE OpenGL contexts).
+---
+ configure    | 32 ++++++++++++++++++++++++++------
+ configure.ac | 23 +++++++++++++++--------
+ 2 files changed, 41 insertions(+), 14 deletions(-)
+
+diff --git a/configure b/configure
+index df4c4a933b5..ec91553727b 100755
+--- a/configure
++++ b/configure
+@@ -14369,8 +14369,18 @@ esac
+ fi
+ if ${ac_cv_lib_soname_EGL:+false} :
+ then :
+-  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: not found" >&5
++  case "$host_os" in
++    linux*)
++      ac_cv_lib_soname_EGL="libEGL.so.1"
++      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_soname_EGL (fallback)" >&5
++printf "%s\n" "$ac_cv_lib_soname_EGL (fallback)" >&6; }
++      printf "%s\n" "#define SONAME_LIBEGL \"$ac_cv_lib_soname_EGL\"" >>confdefs.h
++      ;;
++    *)
++      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: not found" >&5
+ printf "%s\n" "not found" >&6; }
++      ;;
++  esac
+ 
+ else case e in #(
+   e) { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_soname_EGL" >&5
+@@ -16038,15 +16048,25 @@ esac
+ fi
+ if ${ac_cv_lib_soname_GL:+false} :
+ then :
+-  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: not found" >&5
++  case "$host_os" in
++    linux*)
++      ac_cv_lib_soname_GL="libGL.so.1"
++      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_soname_GL (fallback)" >&5
++printf "%s\n" "$ac_cv_lib_soname_GL (fallback)" >&6; }
++      printf "%s\n" "#define SONAME_LIBGL \"$ac_cv_lib_soname_GL\"" >>confdefs.h
++      ;;
++    *)
++      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: not found" >&5
+ printf "%s\n" "not found" >&6; }
+-       if test -f /usr/X11R6/lib/libGL.a
+-                            then
+-	                        opengl_msg="/usr/X11R6/lib/libGL.a is present on your system.
++      if test -f /usr/X11R6/lib/libGL.a
++      then
++          opengl_msg="/usr/X11R6/lib/libGL.a is present on your system.
+ This probably prevents linking to OpenGL. Try deleting the file and restarting configure."
+-                            else
+-                                opengl_msg="No OpenGL library found on this system."
+-                            fi
++      else
++          opengl_msg="No OpenGL library found on this system."
++      fi
++      ;;
++  esac
+ else case e in #(
+   e) { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_soname_GL" >&5
+ printf "%s\n" "$ac_cv_lib_soname_GL" >&6; }
+diff --git a/configure.ac b/configure.ac
+index b8ae3db64a0..b55f8877585 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1237,6 +1237,10 @@ if test "x$with_opengl" != "xno"
+ then
+     WINE_PACKAGE_FLAGS(EGL,[egl],[-lEGL],,,
+         [WINE_CHECK_SONAME(EGL,eglGetProcAddress,,,[$EGL_LIBS])])
++    AS_IF([test -z "$ac_cv_lib_soname_EGL"],
++        [AS_CASE([$host_os],
++            [linux*], [ac_cv_lib_soname_EGL="libEGL.so.1"
++                       AC_DEFINE_UNQUOTED(SONAME_LIBEGL, ["libEGL.so.1"], [Define to the soname of the libEGL library.])])])
+ fi
+ WINE_NOTICE_WITH(opengl, [test -z "$ac_cv_lib_soname_EGL"],
+     [EGL ${notice_platform}development files not found])
+@@ -1388,13 +1392,16 @@ then
+ 		     [OPENGL_LIBS="-lGL"],
+                      [WINE_CHECK_SONAME(GL,glXCreateContext,
+ 			    [OPENGL_LIBS="-Xlinker -dylib_file -Xlinker /System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGL.dylib:/System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGL.dylib -lGL"],
+-			    [if test -f /usr/X11R6/lib/libGL.a
+-                            then
+-	                        opengl_msg="/usr/X11R6/lib/libGL.a is present on your system.
++			    [AS_CASE([$host_os],
++                                [linux*], [ac_cv_lib_soname_GL="libGL.so.1"
++                                           AC_DEFINE_UNQUOTED(SONAME_LIBGL, ["libGL.so.1"], [Define to the soname of the libGL library.])],
++                                [if test -f /usr/X11R6/lib/libGL.a
++                                 then
++	                             opengl_msg="/usr/X11R6/lib/libGL.a is present on your system.
+ This probably prevents linking to OpenGL. Try deleting the file and restarting configure."
+-                            else
+-                                opengl_msg="No OpenGL library found on this system."
+-                            fi],
++                                 else
++                                     opengl_msg="No OpenGL library found on this system."
++                                 fi])],
+ 			    $X_LIBS -lm -dylib_file /System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGL.dylib:/System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGL.dylib)],
+ 		     $X_LIBS -lm)
+     fi
+-- 
+2.43.0

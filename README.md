@@ -32,6 +32,7 @@ packages) instead of Valve's Proton/Soda tree.
   - `patches/0010-wbemprox-implement-Win32_Service-Create-and-fix-wmic.mypatch` — `wbemprox` implementation of `Win32_Service.Create` and `wmic.exe` formatting fix for Crow Hill App, ROOTS Instruments, etc.
   - `patches/0011-wminet_utils-implement-COM-delegate-forwarding-and-_f-exports.mypatch` — `wminet_utils.dll` COM methods and `_f` export aliases for Mono `System.Management.dll` P/Invokes (Crow Hill App, ROOTS Instruments, WinSW services).
   - `patches/0012-opengl-support-child-window-and-egl-pfd-draw-to-window.mypatch` — OpenGL child window context creation, EGL `PFD_DRAW_TO_WINDOW` pixel format flags, and safe cross-connection cursor handling for `baseview` / `glutin` plugins (fixes Copycat VST3/CLAP GUI OpenGL crashes).
+  - `patches/0013-configure-fallback-soname-libgl-and-libegl.mypatch` — Linux runtime fallback for `SONAME_LIBGL` (`libGL.so.1`) and `SONAME_LIBEGL` (`libEGL.so.1`) in `configure` / `configure.ac`, ensuring `winex11.drv` OpenGL driver is active even without build-time `libgl-dev` symlinks (fixes JUCE OpenGL context creation and black screen in Pianoverse VST3 / FL Studio).
   - `scripts/patch_system_management.cs` — Mono `System.Management.dll` P/Invoke binder script.
   - `scripts/patch_gorilla_plugins.cs` — Gorilla Engine plugin binary patch script (Pocket Strings, Vaults, ROOTS Instruments).
   - `scripts/patch_pianoverse.cs` — IK Multimedia Pianoverse null dereference patch script (Pianoverse Standalone, VST3, VST2, AAX).
@@ -135,6 +136,20 @@ Two issues caused OpenGL plugins to crash:
 
 The patch ensures all onscreen and window-capable pixel formats advertise `PFD_DRAW_TO_WINDOW`, falls back to `default_visual` when visual resolution is not directly provided, creates default window cursors on the window's own display connection, and wraps cursor operations with non-fatal X11 error handlers.
 
+## The OpenGL / WGL runtime detection & black screen fix (Pianoverse VST3, JUCE plugins in FL Studio)
+
+Complex JUCE-based audio plugins (such as **IK Multimedia Pianoverse VST3**) create hardware-accelerated OpenGL viewports attached to child HWNDs inside host DAWs (FL Studio, Reaper, Ableton).
+
+When Wine is compiled in environments without `libgl-dev` or `libegl-dev` development link symlinks (e.g. standard build roots or cross-compile environments where only runtime `.so.1` libraries exist), Wine's `./configure` probe fails to link `-lGL` and leaves `SONAME_LIBGL` and `SONAME_LIBEGL` undefined in `config.h`.
+
+As a consequence:
+1. `dlls/winex11.drv/opengl.c` is compiled as dummy stubs returning `STATUS_NOT_IMPLEMENTED` (`0xc0000002`).
+2. Wine falls back to `nulldrv`, which exposes 0 window-drawable pixel formats (`PFD_DRAW_TO_WINDOW`).
+3. JUCE's `ChoosePixelFormat` returns `0`, and `wglCreateContext` fails with `ERROR_INVALID_PIXEL_FORMAT` (code 2000).
+4. The plugin's OpenGL rendering thread dies on initialization while `paintingIsLocked` remains `true`, permanently suppressing `WM_PAINT` updates and leaving the plugin window as a solid black rectangle inside the DAW.
+
+Patch `patches/0013-configure-fallback-soname-libgl-and-libegl.mypatch` provides automatic Linux fallbacks for `SONAME_LIBGL` (`"libGL.so.1"`) and `SONAME_LIBEGL` (`"libEGL.so.1"`). Since Wine loads these libraries at runtime via `dlopen()`, this ensures full OpenGL / WGL window rendering support out of the box even when `-dev` packages are absent during compilation.
+
 ## Build
 
 ### Locally
@@ -181,6 +196,6 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 - d2d1/dcomp patch series: **giang17** — [github.com/giang17/wine](https://github.com/giang17/wine)
 - Standalone packaging this base is taken from: [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 - MSI string-pool analysis + patch, and this build tooling: **Kimi K3** (Moonshot AI)
-- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix), Gorilla Engine embedded Node.js/libuv patch script (Pocket Strings / Vaults / ROOTS Instruments fix), OpenGL child window context creation, EGL PFD_DRAW_TO_WINDOW flags & safe cursor handling patch (Copycat / baseview / glutin OpenGL plugin fix): **Gemini 3.7 Flash** (Google DeepMind)
+- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix), Gorilla Engine embedded Node.js/libuv patch script (Pocket Strings / Vaults / ROOTS Instruments fix), OpenGL child window context creation, EGL PFD_DRAW_TO_WINDOW flags & safe cursor handling patch (Copycat / baseview / glutin OpenGL plugin fix), Pianoverse null pointer dereference patch script, and OpenGL/EGL soname configure fallback patch (Pianoverse VST3 / FL Studio black screen fix): **Gemini 3.7 Flash** (Google DeepMind)
 
 License: LGPL-2.1-or-later, same as Wine.
