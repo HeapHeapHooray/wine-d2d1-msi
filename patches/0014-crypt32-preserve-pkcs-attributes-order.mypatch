@@ -1,0 +1,101 @@
+From: Antigravity <antigravity@google.com>
+Subject: [PATCH] crypt32: Preserve authenticated attributes order in CRYPT_AsnEncodePKCSAttributes
+
+When verifying Authenticode signatures, CSignedMsgData_UpdateAuthenticatedAttributes
+re-encodes AuthAttrs using CryptEncodeObjectEx(X509_ASN_ENCODING, PKCS_ATTRIBUTES, ...).
+Previously, CRYPT_DEREncodeItemsAsSet unconditionally sorted all SET OF elements using qsort().
+
+However, Microsoft Authenticode signatures and Windows CryptEncodeObject(..., PKCS_ATTRIBUTES, ...)
+do not sort attributes; they preserve the original array order. Furthermore, RFC 5652 (CMS) §5.4
+explicitly specifies that authenticatedAttributes must not be re-ordered or re-encoded differently
+from how they were signed.
+
+Sorting the attributes changes their encoded byte order whenever the input is not lexicographically
+pre-sorted (for example, FL Studio 2026 launcher FL64.exe verifying FLEngine_x64.dll signature attributes
+[1.3.6.1.4.1.311.2.1.11, 1.3.6.1.4.1.311.2.1.12, contentType, messageDigest]).
+This results in a mismatched message digest calculation, causing RSAENH_CPVerifySignature
+to fail with NTE_BAD_SIGNATURE (0x80090006) and WinVerifyTrust to fail with TRUST_E_CERT_SIGNATURE
+(0x80096004), preventing FL Studio 2026 from starting ("The validity of the program could not be verified").
+
+Add a `sort` flag to struct DERSetDescriptor so CRYPT_DEREncodeItemsAsSet only sorts
+SET OF items when explicitly requested, and set sort = FALSE for PKCS_ATTRIBUTES.
+---
+ dlls/crypt32/encode.c | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/dlls/crypt32/encode.c b/dlls/crypt32/encode.c
+index ecec1bffa96..67d29852ae1 100644
+--- a/dlls/crypt32/encode.c
++++ b/dlls/crypt32/encode.c
+@@ -1234,6 +1234,7 @@ struct DERSetDescriptor
+     size_t                  itemSize;
+     size_t                  itemOffset;
+     CryptEncodeObjectExFunc encode;
++    BOOL                    sort;
+ };
+ 
+ static BOOL WINAPI CRYPT_DEREncodeItemsAsSet(DWORD dwCertEncodingType,
+@@ -1291,8 +1292,9 @@ static BOOL WINAPI CRYPT_DEREncodeItemsAsSet(DWORD dwCertEncodingType,
+         {
+             if (dwFlags & CRYPT_ENCODE_ALLOC_FLAG)
+                 pbEncoded = *(BYTE **)pbEncoded;
+-            qsort(setOf.rgBlob, setOf.cBlob, sizeof(CRYPT_DER_BLOB),
+-             BLOBComp);
++            if (desc->sort)
++                qsort(setOf.rgBlob, setOf.cBlob, sizeof(CRYPT_DER_BLOB),
++                 BLOBComp);
+             *pbEncoded++ = ASN_CONSTRUCTOR | ASN_SETOF;
+             CRYPT_EncodeLen(bytesNeeded - lenBytes - 1, pbEncoded, &lenBytes);
+             pbEncoded += lenBytes;
+@@ -1903,7 +1905,7 @@ static BOOL WINAPI CRYPT_AsnEncodePKCSAttributes(DWORD dwCertEncodingType,
+     {
+         const CRYPT_ATTRIBUTES *attributes = pvStructInfo;
+         struct DERSetDescriptor desc = { attributes->cAttr, attributes->rgAttr,
+-         sizeof(CRYPT_ATTRIBUTE), 0, CRYPT_AsnEncodePKCSAttribute };
++         sizeof(CRYPT_ATTRIBUTE), 0, CRYPT_AsnEncodePKCSAttribute, FALSE };
+ 
+         ret = CRYPT_DEREncodeItemsAsSet(X509_ASN_ENCODING, lpszStructType,
+          &desc, dwFlags, pEncodePara, pbEncoded, pcbEncoded);
+@@ -4348,7 +4350,7 @@ BOOL CRYPT_AsnEncodeCMSSignedInfo(CRYPT_SIGNED_INFO *signedInfo, void *pvData,
+     struct DERSetDescriptor digestAlgorithmsSet = { signedInfo->cSignerInfo,
+      signedInfo->rgSignerInfo, sizeof(CMSG_CMS_SIGNER_INFO),
+      offsetof(CMSG_CMS_SIGNER_INFO, HashAlgorithm),
+-     CRYPT_AsnEncodeAlgorithmIdWithNullParams };
++     CRYPT_AsnEncodeAlgorithmIdWithNullParams, TRUE };
+     struct AsnEncodeSequenceItem items[7] = {
+      { &signedInfo->version, CRYPT_AsnEncodeInt, 0 },
+      { &digestAlgorithmsSet, CRYPT_DEREncodeItemsAsSet, 0 },
+@@ -4365,6 +4367,7 @@ BOOL CRYPT_AsnEncodeCMSSignedInfo(CRYPT_SIGNED_INFO *signedInfo, void *pvData,
+         certSet.itemSize = sizeof(CERT_BLOB);
+         certSet.itemOffset = 0;
+         certSet.encode = CRYPT_CopyEncodedBlob;
++        certSet.sort = TRUE;
+         swapped[cSwapped].tag = ASN_CONSTRUCTOR | ASN_CONTEXT | 0;
+         swapped[cSwapped].pvStructInfo = &certSet;
+         swapped[cSwapped].encodeFunc = CRYPT_DEREncodeItemsAsSet;
+@@ -4380,6 +4383,7 @@ BOOL CRYPT_AsnEncodeCMSSignedInfo(CRYPT_SIGNED_INFO *signedInfo, void *pvData,
+         crlSet.itemSize = sizeof(CRL_BLOB);
+         crlSet.itemOffset = 0;
+         crlSet.encode = CRYPT_CopyEncodedBlob;
++        crlSet.sort = TRUE;
+         swapped[cSwapped].tag = ASN_CONSTRUCTOR | ASN_CONTEXT | 1;
+         swapped[cSwapped].pvStructInfo = &crlSet;
+         swapped[cSwapped].encodeFunc = CRYPT_DEREncodeItemsAsSet;
+@@ -4393,6 +4397,7 @@ BOOL CRYPT_AsnEncodeCMSSignedInfo(CRYPT_SIGNED_INFO *signedInfo, void *pvData,
+     signerSet.itemSize = sizeof(CMSG_CMS_SIGNER_INFO);
+     signerSet.itemOffset = 0;
+     signerSet.encode = CRYPT_AsnEncodeCMSSignerInfo;
++    signerSet.sort = TRUE;
+     items[cItem].pvStructInfo = &signerSet;
+     items[cItem].encodeFunc = CRYPT_DEREncodeItemsAsSet;
+     cItem++;
+@@ -4442,7 +4447,7 @@ BOOL CRYPT_AsnEncodePKCSEnvelopedData(const CRYPT_ENVELOPED_DATA *envelopedData,
+ {
+     struct DERSetDescriptor recipientInfosSet = { envelopedData->cRecipientInfo,
+      envelopedData->rgRecipientInfo, sizeof(CMSG_KEY_TRANS_RECIPIENT_INFO), 0,
+-     CRYPT_AsnEncodeRecipientInfo };
++     CRYPT_AsnEncodeRecipientInfo, TRUE };
+     struct AsnEncodeSequenceItem items[] = {
+      { &envelopedData->version, CRYPT_AsnEncodeInt, 0 },
+      { &recipientInfosSet, CRYPT_DEREncodeItemsAsSet, 0 },
+-- 

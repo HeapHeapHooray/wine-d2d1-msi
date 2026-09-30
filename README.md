@@ -33,6 +33,7 @@ packages) instead of Valve's Proton/Soda tree.
   - `patches/0011-wminet_utils-implement-COM-delegate-forwarding-and-_f-exports.mypatch` — `wminet_utils.dll` COM methods and `_f` export aliases for Mono `System.Management.dll` P/Invokes (Crow Hill App, ROOTS Instruments, WinSW services).
   - `patches/0012-opengl-support-child-window-and-egl-pfd-draw-to-window.mypatch` — OpenGL child window context creation, EGL `PFD_DRAW_TO_WINDOW` pixel format flags, and safe cross-connection cursor handling for `baseview` / `glutin` plugins (fixes Copycat VST3/CLAP GUI OpenGL crashes).
   - `patches/0013-configure-fallback-soname-libgl-and-libegl.mypatch` — Linux runtime fallback for `SONAME_LIBGL` (`libGL.so.1`) and `SONAME_LIBEGL` (`libEGL.so.1`) in `configure` / `configure.ac`, ensuring `winex11.drv` OpenGL driver is active even without build-time `libgl-dev` symlinks (fixes JUCE OpenGL context creation and black screen in Pianoverse VST3 / FL Studio).
+  - `patches/0014-crypt32-preserve-pkcs-attributes-order.mypatch` — Preserves input attribute order in `CRYPT_AsnEncodePKCSAttributes` without sorting, fixing Authenticode signature verification (`TRUST_E_CERT_SIGNATURE` / 0x80096004) in FL Studio 2026 launcher (`FL64.exe` verifying `FLEngine_x64.dll`).
   - `scripts/patch_system_management.cs` — Mono `System.Management.dll` P/Invoke binder script.
   - `scripts/patch_gorilla_plugins.cs` — Gorilla Engine plugin binary patch script (Pocket Strings, Vaults, ROOTS Instruments).
   - `scripts/patch_pianoverse.cs` — IK Multimedia Pianoverse null dereference patch script (Pianoverse Standalone, VST3, VST2, AAX).
@@ -150,6 +151,24 @@ As a consequence:
 
 Patch `patches/0013-configure-fallback-soname-libgl-and-libegl.mypatch` provides automatic Linux fallbacks for `SONAME_LIBGL` (`"libGL.so.1"`) and `SONAME_LIBEGL` (`"libEGL.so.1"`). Since Wine loads these libraries at runtime via `dlopen()`, this ensures full OpenGL / WGL window rendering support out of the box even when `-dev` packages are absent during compilation.
 
+## The Authenticode signature verification & PKCS attributes sorting fix (FL Studio 2026 launcher)
+
+In newer versions of FL Studio (FL Studio 2026+), the 64-bit launcher executable (`FL64.exe`) verifies the digital signature of the main engine DLL (`FLEngine_x64.dll`) using `WinVerifyTrust` with action `WINTRUST_ACTION_GENERIC_VERIFY_V2` before loading the engine and launching the UI. If verification fails, the launcher presents the dialog box:
+> *"Verification error: The validity of the program could not be verified. Please reinstall it and try again."*
+
+During `WinVerifyTrust`, `wintrust.dll` calls `CryptMsgControl(..., CMSG_CTRL_VERIFY_SIGNATURE_EX, ...)` in `crypt32.dll` to verify the signer's digital signature over the authenticated attributes (`AuthAttrs`).
+
+Two issues caused `WinVerifyTrust` to fail with `TRUST_E_CERT_SIGNATURE` (`0x80096004`):
+1. `CSignedMsgData_UpdateAuthenticatedAttributes` in `dlls/crypt32/msg.c` re-encodes the authenticated attributes via `CryptEncodeObjectEx(X509_ASN_ENCODING, PKCS_ATTRIBUTES, ...)` to compute the message digest for signature verification.
+2. In `dlls/crypt32/encode.c`, `CRYPT_AsnEncodePKCSAttributes` forwarded the attributes to `CRYPT_DEREncodeItemsAsSet`, which unconditionally called `qsort` using `BLOBComp` to sort all elements by DER TLV length and byte value.
+
+While the general X.690 DER specification defines `SET OF` components as sorted, Microsoft Authenticode and Windows `CryptEncodeObject(..., PKCS_ATTRIBUTES, ...)` do **not** sort attributes automatically; they preserve the caller's array order. Furthermore, RFC 5652 (CMS) §5.4 explicitly stipulates:
+> *"A separate encoding of the signedAttributes field, performed for message digest calculation, MUST NOT be performed. The authenticatedAttributes value as received from the message MUST be used..."*
+
+When Wine re-sorted the 4 authenticated attributes (`1.3.6.1.4.1.311.2.1.11` statement type, `1.3.6.1.4.1.311.2.1.12` opus info, `contentType`, and `messageDigest`), the attribute order changed, producing a completely different SHA-256 hash. `RSAENH_CPVerifySignature` subsequently failed with `NTE_BAD_SIGNATURE` (`0x80090006`), causing `WinVerifyTrust` to fail.
+
+Patch `patches/0014-crypt32-preserve-pkcs-attributes-order.mypatch` adds a `sort` control flag to `struct DERSetDescriptor` so `CRYPT_DEREncodeItemsAsSet` only sorts `SET OF` components when explicitly required, and sets `sort = FALSE` for `PKCS_ATTRIBUTES`. This preserves the original attribute order and allows Authenticode signatures in FL Studio 2026 (`FL64.exe` / `FLEngine_x64.dll`) to verify cleanly.
+
 ## Build
 
 ### Locally
@@ -196,6 +215,6 @@ Then select **wine-d2d1-msi-11.0** as the runner.
 - d2d1/dcomp patch series: **giang17** — [github.com/giang17/wine](https://github.com/giang17/wine)
 - Standalone packaging this base is taken from: [mklnln/wine-d2d1-dcomp](https://github.com/mklnln/wine-d2d1-dcomp)
 - MSI string-pool analysis + patch, and this build tooling: **Kimi K3** (Moonshot AI)
-- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix), Gorilla Engine embedded Node.js/libuv patch script (Pocket Strings / Vaults / ROOTS Instruments fix), OpenGL child window context creation, EGL PFD_DRAW_TO_WINDOW flags & safe cursor handling patch (Copycat / baseview / glutin OpenGL plugin fix), Pianoverse null pointer dereference patch script, and OpenGL/EGL soname configure fallback patch (Pianoverse VST3 / FL Studio black screen fix): **Gemini 3.7 Flash** (Google DeepMind)
+- wined3d Vulkan host-visible BO mapping patch (Kontakt 8 D3D backend fix), mscoree CLRRuntimeInfo_GetProcAddress + IManagedInstaller patch (HPWin2126.msi VS/WiX managed installer fix), wbemprox Win32_Service.Create & wmic patch (Crow Hill App & ROOTS Instruments service fix), wminet_utils COM delegate forwarding & _f export aliases patch + System.Management binder (Crow Hill App / Mono WMI fix), Gorilla Engine embedded Node.js/libuv patch script (Pocket Strings / Vaults / ROOTS Instruments fix), OpenGL child window context creation, EGL PFD_DRAW_TO_WINDOW flags & safe cursor handling patch (Copycat / baseview / glutin OpenGL plugin fix), Pianoverse null pointer dereference patch script, OpenGL/EGL soname configure fallback patch (Pianoverse VST3 / FL Studio black screen fix), and crypt32 PKCS attributes order preservation patch (FL Studio 2026 launcher signature verification fix): **Gemini 3.7 Flash** (Google DeepMind)
 
 License: LGPL-2.1-or-later, same as Wine.
