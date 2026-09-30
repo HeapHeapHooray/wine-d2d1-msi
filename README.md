@@ -1,5 +1,8 @@
 # wine-d2d1-msi — plain-Wine runner with d2d1-dcomp + the MSI string-pool fix
 
+> [!NOTE]
+> **Disclaimer:** The project has since outgrown its original purpose, which was an MSI-fix for Kontakt 8 Installation. Further work on software compatibility will be done on [https://github.com/HeapHeapHooray/wine-mozart](https://github.com/HeapHeapHooray/wine-mozart).
+
 > **Credits:** this project — the MSI string-pool analysis and patch, and the
 > whole build/packaging setup — was done entirely by **Kimi K3** (an AI
 > assistant by Moonshot AI).
