@@ -87,23 +87,15 @@ index 01eb3b9c356..edf483f4717 100644
          return TRUE;
      }
  }
-@@ -510,7 +519,7 @@ static BOOL x11drv_egl_describe_pixel_format( int format, struct wgl_pixel_forma
-     XVisualInfo visual;
- 
-     if (!p_egl_describe_pixel_format( format, pf )) return FALSE;
--    if (!visual_from_pixel_format( format, &visual ) || visual.depth != default_visual.depth)
-+    if (visual_from_pixel_format( format, &visual ) && visual.depth != default_visual.depth)
-     {
-         /* Forbid drawing to windows with formats whose depth does not match the screen depth
-          * so that we can copy child windows on-screen using XCopyArea().
 diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
-index 0926d2c9390..72fe9a2440d 100644
+index c90463543cb..a012557ae63 100644
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
-@@ -2617,6 +2617,11 @@ Window create_client_window( HWND hwnd, RECT client_rect, const XVisualInfo *vis
- }
+@@ -2868,6 +2868,12 @@ Window create_client_window( HWND hwnd, RECT client_rect, const XVisualInfo *vis
+  * see update_window_argb_visual(). */
+ static const WCHAR dwm_glass_prop[] = {'_','_','w','i','n','e','_','d','w','m','_','g','l','a','s','s',0};
  
- 
++
 +static int ignore_cursor_error( Display *display, XErrorEvent *event, void *arg )
 +{
 +    return (event->error_code == BadCursor || event->error_code == BadWindow || event->error_code == BadValue);
@@ -112,7 +104,7 @@ index 0926d2c9390..72fe9a2440d 100644
  /**********************************************************************
   *		create_whole_window
   *
-@@ -2686,7 +2691,17 @@ static void create_whole_window( struct x11drv_win_data *data )
+@@ -2954,7 +2960,17 @@ static void create_whole_window( struct x11drv_win_data *data )
         never set a cursor of their own (e.g. cross-process embedded WebView2
         surfaces) don't end up blank once WM reparenting breaks the X11 cursor
         inheritance to the owner window */
@@ -130,6 +122,9 @@ index 0926d2c9390..72fe9a2440d 100644
 +    }
  
      XFlush( data->display );  /* make sure the window exists before we start painting to it */
+
+
+
  
 diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
 index b99fc35f48c..c9676643155 100644

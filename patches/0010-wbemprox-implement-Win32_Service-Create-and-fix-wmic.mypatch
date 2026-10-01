@@ -570,62 +570,10 @@ index b8d2cb56ad5..1d9f9714d1f 100644
  HRESULT service_resume_service(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
  HRESULT service_start_service(IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out);
 diff --git a/programs/wmic/main.c b/programs/wmic/main.c
-index 9d1748ca753..5c9a44e13ae 100644
+index 8677c7f42ef..bf0d0d82937 100644
 --- a/programs/wmic/main.c
 +++ b/programs/wmic/main.c
-@@ -72,24 +72,22 @@ static const WCHAR *find_class( const WCHAR *alias )
- 
- static int WINAPIV output_string( const WCHAR *msg, ... )
- {
--    int count, bom_count = 0;
--    static BOOL bom;
-+    WCHAR buffer[ MAX_STRING ];
-+    char mbbuf[ MAX_STRING * 2 ];
-     va_list va_args;
- 
--    if (!bom)
-+    va_start( va_args, msg );
-+    vswprintf( buffer, ARRAY_SIZE(buffer), msg, va_args );
-+    va_end( va_args );
-+
-+    if (GetFileType((HANDLE)_get_osfhandle( STDOUT_FILENO )) == FILE_TYPE_DISK)
-     {
--        if (GetFileType((HANDLE)_get_osfhandle( STDOUT_FILENO )) == FILE_TYPE_DISK)
--        {
--            _setmode( STDOUT_FILENO, _O_U16TEXT );
--            bom_count = wprintf( L"\xfeff" );
--        }
--        bom = TRUE;
-+        _setmode( STDOUT_FILENO, _O_U16TEXT );
-+        return wprintf( L"%s", buffer );
-     }
- 
--    va_start( va_args, msg );
--    count = vwprintf( msg, va_args );
--    va_end( va_args );
--    return count + bom_count;
-+    WideCharToMultiByte( CP_OEMCP, 0, buffer, -1, mbbuf, sizeof(mbbuf), NULL, NULL );
-+    return printf( "%s", mbbuf );
- }
- 
- static int output_error( int msg )
-@@ -102,7 +100,14 @@ static int output_error( int msg )
- 
- static int output_text( const WCHAR *str, ULONG column_width )
- {
--    return output_string( L"%-*s", column_width, str );
-+    WCHAR buffer[ MAX_STRING ];
-+    ULONG len = lstrlenW( str );
-+    ULONG pad = (column_width > len) ? column_width - len : 2;
-+    ULONG i;
-+    lstrcpyW( buffer, str );
-+    for (i = 0; i < pad; i++) buffer[len + i] = ' ';
-+    buffer[len + pad] = 0;
-+    return output_string( L"%s", buffer );
- }
- 
- static int output_newline( void )
-@@ -295,6 +300,7 @@ static int query_prop( const WCHAR *class, int argc, WCHAR *argv[] )
+@@ -258,6 +258,7 @@ static void output_table( IEnumWbemClassObject *result )
          while (IWbemClassObject_Next( obj, 0, &name, &v, NULL, NULL ) == S_OK)
          {
              convert_to_bstr( &v );
