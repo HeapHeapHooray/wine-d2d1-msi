@@ -26,7 +26,7 @@ packages) instead of Valve's Proton/Soda tree.
 
 ## What's in the box
 
-- **Base**: `giang17/wine` branch `d2d1-dcomp-11.0` @ `46c43a2db62ceeac1b33b31bccdebda65ef7f770`
+- **Base**: `giang17/wine` branch `d2d1-dcomp-11.0` @ `496ddf7abf6fc92644ea0cbb8f128d0336c51e25`
   (the branch state at **2026-07-03** — plain Wine 11.0 + the d2d1/dcomp/dwrite/dxgi/wined3d/win32 fixes, already in the branch).
 - **Patches**:
   - `patches/0007-msi-rewrite-all-tables-on-long-strref.mypatch` — the MSI fix.
